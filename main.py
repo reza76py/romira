@@ -3,6 +3,7 @@ from database import engine
 import models
 from routers import students
 from routers import chat
+from routers import agent
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -14,6 +15,7 @@ app = FastAPI(
 
 app.include_router(students.router)
 app.include_router(chat.router)
+app.include_router(agent.router)
 
 @app.get("/")
 def read_root():
