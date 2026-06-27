@@ -1,0 +1,27 @@
+# Environment
+.env
+
+# Virtual environment
+venv/
+
+# Database
+romira.db
+
+# ChromaDB vector store
+chroma_db/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# PDF files (copyright)
+*.pdf
+
+# Node modules (frontend)
+frontend/node_modules/
+frontend/dist/
+
+# OS files
+.DS_Store
+Thumbs.db
