@@ -65,7 +65,7 @@ Return ONLY valid JSON — no markdown fences, no explanation — with exactly t
 {{
   "english_translation": "natural English translation of what the student wrote",
   "book_sentences": {json.dumps(book_sentences, ensure_ascii=False)},
-  "grammar_point": "one grammar point relevant to the student's errors or the book sentences. Format as alternating lines: first line is the English explanation, second line is the Persian translation of that explanation, then repeat for each sentence. Max 3 pairs. Simple language for level {student.level}. No blank lines between pairs.",
+  "grammar_point": "یک یا دو جمله کوتاه فارسی درباره نکته گرامری. فقط فارسی. هیچ کلمه انگلیسی نباشد. هر جمله در یک خط جداگانه.",
   "practice_exercises": ["She ___ (want) to go. | wants", "sentence 2 with blank | answer", "sentence 3 with blank | answer"]
 }}
 
@@ -95,6 +95,7 @@ Each practice exercise MUST follow this exact format: fill-in-the-blank sentence
     )
     db.add(interaction)
     db.commit()
+    result["id"] = interaction.id
 
     return result
 
@@ -147,6 +148,18 @@ No markdown, no extra text, only JSON."""
     return result
 
 
+@router.put("/interaction/{interaction_id}/close")
+def close_interaction(interaction_id: int, body: schemas.CloseInteraction, db: Session = Depends(get_db)):
+    interaction = db.query(models.StudentInteraction).filter(models.StudentInteraction.id == interaction_id).first()
+    if not interaction:
+        raise HTTPException(status_code=404, detail="Interaction not found")
+    interaction.duration_seconds = body.duration_seconds
+    interaction.total_retries = body.total_retries
+    interaction.fully_correct = body.fully_correct
+    db.commit()
+    return {"success": True}
+
+
 @router.get("/{student_id}/errors", response_model=list[schemas.StudentErrorResponse])
 def get_errors(student_id: int, db: Session = Depends(get_db)):
     student = db.query(models.Student).filter(models.Student.id == student_id).first()
@@ -184,6 +197,34 @@ def set_password(student_id: int, body: schemas.SetPassword, db: Session = Depen
     student.password = body.password
     db.commit()
     return {"success": True}
+
+
+@router.post("/event", response_model=schemas.StudentEventResponse)
+def create_event(body: schemas.StudentEventCreate, db: Session = Depends(get_db)):
+    event = models.StudentEvent(
+        student_id=body.student_id,
+        event_type=body.event_type,
+        interaction_id=body.interaction_id,
+        event_metadata=body.metadata,
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+@router.get("/{student_id}/events", response_model=list[schemas.StudentEventResponse])
+def get_events(student_id: int, limit: int = 100, db: Session = Depends(get_db)):
+    student = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    return (
+        db.query(models.StudentEvent)
+        .filter(models.StudentEvent.student_id == student_id)
+        .order_by(models.StudentEvent.created_at.desc())
+        .limit(limit)
+        .all()
+    )
 
 
 @router.get("/{student_id}/interactions", response_model=list[schemas.StudentInteractionResponse])

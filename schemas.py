@@ -34,6 +34,7 @@ class StudentCreate(StudentBase):
 class StudentResponse(StudentBase):
     id: int
     created_at: datetime
+    password: str | None = None
     errors: list[StudentErrorResponse] = []
 
     class Config:
@@ -46,6 +47,31 @@ class StudentLogin(BaseModel):
 
 class SetPassword(BaseModel):
     password: str
+
+
+class CloseInteraction(BaseModel):
+    duration_seconds: int
+    total_retries: int
+    fully_correct: bool
+
+
+class StudentEventCreate(BaseModel):
+    student_id: int
+    event_type: str
+    interaction_id: int | None = None
+    metadata: str | None = None
+
+
+class StudentEventResponse(BaseModel):
+    id: int
+    student_id: int
+    event_type: str
+    interaction_id: int | None
+    event_metadata: str | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class StudentInteractionCreate(BaseModel):
@@ -69,6 +95,9 @@ class StudentInteractionResponse(BaseModel):
     grammar_point: str
     practice_exercises: list[str]
     created_at: datetime
+    duration_seconds: int | None = None
+    total_retries: int | None = None
+    fully_correct: bool | None = None
 
     @field_validator('book_sentences', 'practice_exercises', mode='before')
     @classmethod

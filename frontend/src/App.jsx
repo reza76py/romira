@@ -83,6 +83,13 @@ function StudentView({ student, onExit }) {
   const [showCorrections, setShowCorrections] = useState(false)
   const [feedback, setFeedback] = useState({})
   const [checkingAnswers, setCheckingAnswers] = useState(false)
+  const [sessionId, setSessionId] = useState(null)
+  const [sessionStart, setSessionStart] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
+
+  useEffect(() => {
+    logEvent('login')
+  }, [])
 
   async function handleSend() {
     if (!input.trim() || loading) return
@@ -101,7 +108,11 @@ function StudentView({ student, onExit }) {
         throw new Error(body.detail || `خطا (${res.status})`)
       }
       const data = await res.json()
+      await closeSession(false)
       setResult(data)
+      setSessionId(data.id)
+      setSessionStart(Date.now())
+      setRetryCount(0)
       setPracticeAnswers({})
       setShowCorrections(false)
       setFeedback({})
@@ -120,6 +131,7 @@ function StudentView({ student, onExit }) {
 
   async function handleCheckAnswers() {
     setCheckingAnswers(true)
+    logEvent('submit_answer', { answers: practiceAnswers, interaction_id: sessionId })
     const newFeedback = {}
 
     for (let i = 0; i < result.practice_exercises.length; i++) {
@@ -144,6 +156,8 @@ function StudentView({ student, onExit }) {
             }),
           })
           const data = await res.json()
+          setRetryCount(prev => prev + 1)
+          logEvent('retry', { wrong_answer: practiceAnswers[i], interaction_id: sessionId })
           newFeedback[i] = { status: 'wrong', retryData: data, retryAnswer: '', retryChecked: false, retryFeedback: null, showRetry: false }
         } catch {
           newFeedback[i] = { status: 'wrong', retryData: null, retryAnswer: '', retryChecked: false, retryFeedback: null, showRetry: false }
@@ -153,6 +167,41 @@ function StudentView({ student, onExit }) {
 
     setFeedback(newFeedback)
     setCheckingAnswers(false)
+    const allCorrect = Object.values(newFeedback).every(f => f.status === 'correct')
+    if (allCorrect) closeSession(true)
+  }
+
+  async function closeSession(allCorrect) {
+    if (!sessionId || !sessionStart) return
+    const duration = Math.round((Date.now() - sessionStart) / 1000)
+    try {
+      await fetch(`/api/student/interaction/${sessionId}/close`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          duration_seconds: duration,
+          total_retries: retryCount,
+          fully_correct: allCorrect
+        })
+      })
+    } catch { /* silent fail */ }
+    setSessionId(null)
+    setSessionStart(null)
+  }
+
+  async function logEvent(eventType, metadata = null) {
+    try {
+      await fetch('/api/student/event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          student_id: student.id,
+          event_type: eventType,
+          interaction_id: sessionId,
+          metadata: metadata ? JSON.stringify(metadata) : null
+        })
+      })
+    } catch { /* silent fail */ }
   }
 
   return (
@@ -168,7 +217,7 @@ function StudentView({ student, onExit }) {
         <div className="flex items-center gap-3">
           <span className="text-sm text-teal-100 font-medium">Hello, {student.name} 👋</span>
           <button
-            onClick={onExit}
+            onClick={async () => { logEvent('exit', { interaction_id: sessionId }); await closeSession(false); onExit() }}
             className="text-xs text-teal-200 hover:text-white border border-teal-500 hover:border-teal-300 px-3 py-1.5 rounded-lg transition-colors"
           >
             Exit
@@ -202,7 +251,7 @@ function StudentView({ student, onExit }) {
             {/* Book sentences */}
             {!revealed.books ? (
               <button
-                onClick={() => reveal('books')}
+                onClick={() => { reveal('books'); logEvent('press_book', { interaction_id: sessionId }) }}
                 className="w-full text-left bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 text-sm text-teal-700 font-medium transition-colors"
               >
                 Similar sentences from the book 📖
@@ -221,7 +270,7 @@ function StudentView({ student, onExit }) {
             {/* Grammar */}
             {revealed.books && !revealed.grammar ? (
               <button
-                onClick={() => reveal('grammar')}
+                onClick={() => { reveal('grammar'); logEvent('press_grammar', { interaction_id: sessionId }) }}
                 className="w-full text-left bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 text-sm text-teal-700 font-medium transition-colors"
               >
                 Grammar points ✏️
@@ -229,29 +278,16 @@ function StudentView({ student, onExit }) {
             ) : revealed.grammar ? (
               <div className="bg-white rounded-2xl border border-slate-200 px-5 py-4 fade-in">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Grammar Point</p>
-                <div className="space-y-3">
-                  {result.grammar_point
-                    .split('\n')
-                    .filter(line => line.trim().length > 0)
-                    .reduce((pairs, line, idx, arr) => {
-                      if (idx % 2 === 0) pairs.push([line, arr[idx + 1] || ''])
-                      return pairs
-                    }, [])
-                    .map((pair, pi) => (
-                      <div key={pi} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-6">
-                        <p className="text-slate-800 text-sm leading-relaxed sm:w-1/2">{pair[0]}</p>
-                        <p className="text-slate-500 text-sm leading-relaxed sm:w-1/2" dir="rtl" style={PERSIAN_FONT}>{pair[1]}</p>
-                      </div>
-                    ))
-                  }
-                </div>
+                <p className="text-slate-700 text-sm leading-relaxed" dir="rtl" style={PERSIAN_FONT}>
+                  {result.grammar_point}
+                </p>
               </div>
             ) : null}
 
             {/* Practice */}
             {revealed.grammar && !revealed.practice ? (
               <button
-                onClick={() => reveal('practice')}
+                onClick={() => { reveal('practice'); logEvent('press_practice', { interaction_id: sessionId }) }}
                 className="w-full text-left bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 text-sm text-teal-700 font-medium transition-colors"
               >
                 Practice 📝
@@ -347,6 +383,8 @@ function StudentView({ student, onExit }) {
                                                 })
                                               })
                                               const newData = await res.json()
+                                              setRetryCount(prev => prev + 1)
+                                              logEvent('retry', { wrong_answer: fb.retryAnswer, interaction_id: sessionId })
                                               setFeedback(prev => ({
                                                 ...prev,
                                                 [i]: {
@@ -453,6 +491,13 @@ function TeacherView() {
   const [passwordSaved, setPasswordSaved] = useState(false)
   const [shownPassword, setShownPassword] = useState(null)
   const [loadingPassword, setLoadingPassword] = useState(false)
+  const [newStudentName, setNewStudentName] = useState('')
+  const [newStudentBook, setNewStudentBook] = useState('')
+  const [studentAdded, setStudentAdded] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [showDb, setShowDb] = useState(false)
+  const [dbData, setDbData] = useState(null)
+  const [loadingDb, setLoadingDb] = useState(false)
 
   function handleLogin(e) {
     e.preventDefault()
@@ -516,6 +561,53 @@ function TeacherView() {
       setShownPassword(data.password || '(not set)')
     } finally {
       setLoadingPassword(false)
+    }
+  }
+
+  async function handleAddStudent(e) {
+    e.preventDefault()
+    if (!newStudentName.trim() || !newStudentBook.trim()) return
+    const res = await fetch('/api/students/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newStudentName.trim(), book: newStudentBook.trim(), level: '' })
+    })
+    if (res.ok) {
+      const newStudent = await res.json()
+      const updated = await fetch('/api/students/').then(r => r.json())
+      setStudents(updated)
+      setSelectedId(String(newStudent.id))
+      setNewStudentName('')
+      setNewStudentBook('')
+      setStudentAdded(true)
+      setTimeout(() => setStudentAdded(false), 3000)
+    }
+  }
+
+  async function handleDeleteStudent() {
+    const res = await fetch(`/api/students/${selectedId}`, { method: 'DELETE' })
+    if (res.ok) {
+      const updated = await fetch('/api/students/').then(r => r.json())
+      setStudents(updated)
+      setSelectedId(String(updated[0]?.id || ''))
+      setConfirmDelete(false)
+    }
+  }
+
+  async function handleViewDb() {
+    if (showDb) { setShowDb(false); return }
+    setLoadingDb(true)
+    try {
+      const [studentsRes, interactionsRes, errorsRes, eventsRes] = await Promise.all([
+        fetch('/api/students/').then(r => r.json()),
+        fetch(`/api/student/${selectedId}/interactions`).then(r => r.json()),
+        fetch(`/api/student/${selectedId}/errors`).then(r => r.json()),
+        fetch(`/api/student/${selectedId}/events?limit=50`).then(r => r.json()),
+      ])
+      setDbData({ students: studentsRes, interactions: interactionsRes, errors: errorsRes, events: eventsRes })
+      setShowDb(true)
+    } finally {
+      setLoadingDb(false)
     }
   }
 
@@ -618,34 +710,218 @@ function TeacherView() {
     <div className="min-h-screen bg-slate-50">
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-10">
         <h1 className="text-base font-bold text-slate-800">Romira — Teacher Dashboard</h1>
-        <Link to="/" className="text-sm text-teal-600 hover:text-teal-800 transition-colors">
-          ← Student view
-        </Link>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={handleViewDb}
+            disabled={loadingDb}
+            className="text-sm text-slate-500 hover:text-slate-700 border border-slate-200 hover:border-slate-300 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            {loadingDb ? '...' : showDb ? 'Hide DB' : 'View DB'}
+          </button>
+          <Link to="/" className="text-sm text-teal-600 hover:text-teal-800 transition-colors">
+            ← Student view
+          </Link>
+        </div>
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-6 space-y-4">
 
+        {showDb && dbData && (
+          <div className="bg-slate-900 rounded-2xl p-5 space-y-6 text-xs font-mono overflow-x-auto">
+            <h2 className="text-slate-300 font-bold text-sm">Database Viewer</h2>
+
+            {/* Students table */}
+            <div>
+              <p className="text-teal-400 font-bold mb-2">STUDENTS ({dbData.students.length} rows)</p>
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="text-slate-500">
+                    <th className="pr-4 pb-1">id</th>
+                    <th className="pr-4 pb-1">name</th>
+                    <th className="pr-4 pb-1">level</th>
+                    <th className="pr-4 pb-1">book</th>
+                    <th className="pr-4 pb-1">password</th>
+                    <th className="pr-4 pb-1">created_at</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dbData.students.map(s => (
+                    <tr key={s.id} className="text-slate-300 border-t border-slate-800">
+                      <td className="pr-4 py-1">{s.id}</td>
+                      <td className="pr-4 py-1">{s.name}</td>
+                      <td className="pr-4 py-1">{s.level || '—'}</td>
+                      <td className="pr-4 py-1">{s.book}</td>
+                      <td className="pr-4 py-1 text-amber-400">{s.password || '(not set)'}</td>
+                      <td className="pr-4 py-1 text-slate-500">{new Date(s.created_at).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Interactions table */}
+            <div>
+              <p className="text-teal-400 font-bold mb-2">STUDENT_INTERACTIONS ({dbData.interactions.length} rows) — selected student</p>
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="text-slate-500">
+                    <th className="pr-4 pb-1">id</th>
+                    <th className="pr-4 pb-1">persian_input</th>
+                    <th className="pr-4 pb-1">english</th>
+                    <th className="pr-4 pb-1">duration_s</th>
+                    <th className="pr-4 pb-1">retries</th>
+                    <th className="pr-4 pb-1">fully_correct</th>
+                    <th className="pr-4 pb-1">created_at</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dbData.interactions.map(ix => (
+                    <tr key={ix.id} className="text-slate-300 border-t border-slate-800">
+                      <td className="pr-4 py-1">{ix.id}</td>
+                      <td className="pr-4 py-1 max-w-[120px] truncate" dir="rtl" style={PERSIAN_FONT}>{ix.persian_input}</td>
+                      <td className="pr-4 py-1 max-w-[120px] truncate">{ix.english_translation}</td>
+                      <td className="pr-4 py-1">{ix.duration_seconds ?? '—'}</td>
+                      <td className="pr-4 py-1">{ix.total_retries ?? '—'}</td>
+                      <td className={`pr-4 py-1 ${ix.fully_correct ? 'text-emerald-400' : ix.fully_correct === false ? 'text-red-400' : 'text-slate-500'}`}>
+                        {ix.fully_correct === true ? 'yes' : ix.fully_correct === false ? 'no' : '—'}
+                      </td>
+                      <td className="pr-4 py-1 text-slate-500">{new Date(ix.created_at).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Errors table */}
+            <div>
+              <p className="text-teal-400 font-bold mb-2">STUDENT_ERRORS ({dbData.errors.length} rows) — selected student</p>
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="text-slate-500">
+                    <th className="pr-4 pb-1">id</th>
+                    <th className="pr-4 pb-1">wrong</th>
+                    <th className="pr-4 pb-1">correct</th>
+                    <th className="pr-4 pb-1">noted_at</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dbData.errors.map(e => (
+                    <tr key={e.id} className="text-slate-300 border-t border-slate-800">
+                      <td className="pr-4 py-1">{e.id}</td>
+                      <td className="pr-4 py-1 text-red-400">{e.wrong}</td>
+                      <td className="pr-4 py-1 text-emerald-400">{e.correct}</td>
+                      <td className="pr-4 py-1 text-slate-500">{new Date(e.noted_at).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Events table */}
+            <div>
+              <p className="text-teal-400 font-bold mb-2">STUDENT_EVENTS ({dbData.events.length} rows) — selected student, last 50</p>
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="text-slate-500">
+                    <th className="pr-4 pb-1">id</th>
+                    <th className="pr-4 pb-1">event_type</th>
+                    <th className="pr-4 pb-1">interaction_id</th>
+                    <th className="pr-4 pb-1">metadata</th>
+                    <th className="pr-4 pb-1">created_at</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dbData.events.map(ev => (
+                    <tr key={ev.id} className="text-slate-300 border-t border-slate-800">
+                      <td className="pr-4 py-1">{ev.id}</td>
+                      <td className="pr-4 py-1 text-amber-400">{ev.event_type}</td>
+                      <td className="pr-4 py-1">{ev.interaction_id ?? '—'}</td>
+                      <td className="pr-4 py-1 text-slate-400 max-w-[200px] truncate">{ev.event_metadata || '—'}</td>
+                      <td className="pr-4 py-1 text-slate-500">{new Date(ev.created_at).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* ── Section 1: Student Info ─────────────────────────────────── */}
         <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
-          {/* Selector + stats */}
+          {/* Add student form */}
+          <form onSubmit={handleAddStudent} className="flex gap-2 items-center pb-3 border-b border-slate-100">
+            <input
+              type="text"
+              value={newStudentName}
+              onChange={(e) => setNewStudentName(e.target.value)}
+              placeholder="Student name"
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 w-36"
+            />
+            <input
+              type="text"
+              value={newStudentBook}
+              onChange={(e) => setNewStudentBook(e.target.value)}
+              placeholder="Book title"
+              className="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            />
+            <button
+              type="submit"
+              disabled={!newStudentName.trim() || !newStudentBook.trim()}
+              className="bg-teal-600 hover:bg-teal-700 disabled:bg-teal-300 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition-colors shrink-0"
+            >
+              Add Student
+            </button>
+            {studentAdded && <span className="text-emerald-600 text-sm">Student added ✓</span>}
+          </form>
+
+          {/* Selector + stats + delete */}
           <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <label className="text-sm font-medium text-slate-500">Student</label>
               <select
                 value={selectedId}
-                onChange={(e) => setSelectedId(e.target.value)}
+                onChange={(e) => { setSelectedId(e.target.value); setConfirmDelete(false) }}
                 className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400"
               >
                 {students.map((s) => (
                   <option key={s.id} value={String(s.id)}>{s.name}</option>
                 ))}
               </select>
+              {students.length > 1 && !confirmDelete && (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="text-sm text-red-400 hover:text-red-600 border border-red-200 hover:border-red-400 px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  Delete
+                </button>
+              )}
             </div>
             <div className="flex gap-4 text-sm text-slate-500">
               <span>This week: <span className="font-semibold text-slate-700">{thisWeekCount}</span></span>
               <span>Total: <span className="font-semibold text-slate-700">{interactions.length}</span></span>
             </div>
           </div>
+
+          {/* Delete confirmation */}
+          {confirmDelete && (
+            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center gap-3">
+              <p className="text-sm text-red-700 flex-1">
+                Delete <strong>{students.find(s => String(s.id) === selectedId)?.name}</strong> and all their data? This cannot be undone.
+              </p>
+              <button
+                onClick={handleDeleteStudent}
+                className="bg-red-500 hover:bg-red-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors shrink-0"
+              >
+                Confirm
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="text-sm text-slate-500 hover:text-slate-700 border border-slate-200 px-3 py-1.5 rounded-lg transition-colors shrink-0"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
 
           {/* Student info */}
           {selectedStudent && (
