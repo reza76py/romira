@@ -99,6 +99,55 @@ Each practice exercise MUST follow this exact format: fill-in-the-blank sentence
     return result
 
 
+@router.post("/retry")
+def retry(body: schemas.StudentRetryCreate, db: Session = Depends(get_db)):
+    # Log the mistake to StudentError table
+    db.add(models.StudentError(
+        student_id=body.student_id,
+        wrong=body.wrong_answer,
+        correct=body.correct_answer,
+    ))
+    db.commit()
+
+    prompt = f"""A student made this mistake:
+Wrong: {body.wrong_answer}
+Correct: {body.correct_answer}
+
+The grammar point being practiced was:
+{body.grammar_point}
+
+Do two things:
+1. Explain in very simple terms WHY this is wrong and what the correct rule is.
+   Format: one English sentence, then its Persian translation on the next line. Repeat for up to 2 points.
+2. Give ONE new fill-in-the-blank practice sentence testing the same grammar point.
+   Format it exactly as: "The sentence with ___ | correct answer"
+   Example: "She ___ (want) to go home. | wants"
+
+Return ONLY valid JSON with these exact keys:
+{{
+  "simpler_explanation": "English line\\nفارسی\\nEnglish line 2\\nفارسی 2",
+  "new_practice": "She ___ (want) to go home. | wants"
+}}
+
+No markdown, no extra text, only JSON."""
+
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = response.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1]
+            raw = raw.rsplit("```", 1)[0].strip()
+        result = json.loads(raw)
+    except Exception:
+        result = {"simpler_explanation": "Please review the correct answer.", "new_practice": ""}
+
+    return result
+
+
 @router.get("/{student_id}/interactions", response_model=list[schemas.StudentInteractionResponse])
 def get_interactions(student_id: int, db: Session = Depends(get_db)):
     student = db.query(models.Student).filter(models.Student.id == student_id).first()

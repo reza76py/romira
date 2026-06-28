@@ -45,6 +45,13 @@ class StudentInteractionCreate(BaseModel):
     persian_input: str
 
 
+class StudentRetryCreate(BaseModel):
+    student_id: int
+    wrong_answer: str
+    correct_answer: str
+    grammar_point: str
+
+
 class StudentInteractionResponse(BaseModel):
     id: int
     student_id: int

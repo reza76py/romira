@@ -15,6 +15,8 @@ function StudentView() {
   const [error, setError] = useState(null)
   const [practiceAnswers, setPracticeAnswers] = useState({})
   const [showCorrections, setShowCorrections] = useState(false)
+  const [feedback, setFeedback] = useState({})
+  const [checkingAnswers, setCheckingAnswers] = useState(false)
 
   useEffect(() => {
     fetch('/api/students/')
@@ -48,6 +50,8 @@ function StudentView() {
       setResult(data)
       setPracticeAnswers({})
       setShowCorrections(false)
+      setFeedback({})
+      setCheckingAnswers(false)
       setInput('')
     } catch (e) {
       setError(e.message)
@@ -58,6 +62,43 @@ function StudentView() {
 
   function reveal(key) {
     setRevealed((r) => ({ ...r, [key]: true }))
+  }
+
+  async function handleCheckAnswers() {
+    setCheckingAnswers(true)
+    const newFeedback = {}
+
+    for (let i = 0; i < result.practice_exercises.length; i++) {
+      const ex = result.practice_exercises[i]
+      const parts = ex.split(' | ')
+      const correctAnswer = (parts[1] || '').trim().toLowerCase()
+      const userAnswer = (practiceAnswers[i] || '').trim().toLowerCase()
+      const isCorrect = userAnswer === correctAnswer
+
+      if (isCorrect) {
+        newFeedback[i] = { status: 'correct', retryData: null, retryAnswer: '', retryChecked: false, retryFeedback: null }
+      } else {
+        try {
+          const res = await fetch('/api/student/retry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              student_id: parseInt(selectedId),
+              wrong_answer: practiceAnswers[i] || '',
+              correct_answer: parts[1] || '',
+              grammar_point: result.grammar_point,
+            }),
+          })
+          const data = await res.json()
+          newFeedback[i] = { status: 'wrong', retryData: data, retryAnswer: '', retryChecked: false, retryFeedback: null, showRetry: false }
+        } catch {
+          newFeedback[i] = { status: 'wrong', retryData: null, retryAnswer: '', retryChecked: false, retryFeedback: null, showRetry: false }
+        }
+      }
+    }
+
+    setFeedback(newFeedback)
+    setCheckingAnswers(false)
   }
 
   return (
@@ -234,51 +275,127 @@ function StudentView() {
                   <p className="text-xs font-semibold uppercase tracking-wider text-emerald-500 mb-3">
                     Practice
                   </p>
-                  <div className="space-y-4">
+                  <div className="space-y-6">
                     {result.practice_exercises.map((ex, i) => {
                       const parts = ex.split(' | ')
                       const prompt = parts[0] || ex
-                      const correctAnswer = parts[1] || ''
+                      const fb = feedback[i]
+
                       return (
-                        <div key={i} className="space-y-1">
+                        <div key={i} className="space-y-2">
+                          {/* Question + input */}
                           <div className="flex gap-3 items-start">
-                            <span className="text-emerald-400 font-mono text-xs mt-3 select-none shrink-0">
-                              {i + 1}.
-                            </span>
+                            <span className="text-emerald-400 font-mono text-xs mt-3 select-none shrink-0">{i + 1}.</span>
                             <div className="flex-1">
                               <p className="text-slate-700 text-sm leading-relaxed mb-1">{prompt}</p>
                               <input
                                 type="text"
                                 value={practiceAnswers[i] || ''}
-                                onChange={(e) =>
-                                  setPracticeAnswers((prev) => ({ ...prev, [i]: e.target.value }))
-                                }
+                                onChange={(e) => setPracticeAnswers((prev) => ({ ...prev, [i]: e.target.value }))}
                                 placeholder="Your answer..."
-                                disabled={showCorrections}
-                                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent disabled:bg-slate-50 disabled:text-slate-400"
+                                disabled={!!fb}
+                                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:bg-slate-50 disabled:text-slate-400"
                               />
-                              {showCorrections && correctAnswer && (
-                                <p className="mt-1 text-xs text-emerald-600 font-medium">
-                                  ✓ {correctAnswer}
-                                </p>
-                              )}
                             </div>
                           </div>
+
+                          {/* Feedback */}
+                          {fb && (
+                            <div className="ml-6">
+                              {fb.status === 'correct' ? (
+                                <p className="text-emerald-600 text-sm font-medium">✓ Correct!</p>
+                              ) : (
+                                <div className="space-y-3">
+                                  <p className="text-red-500 text-sm font-medium">
+                                    ✗ Correct answer: <span className="font-bold">{(ex.split(' | ')[1] || '').trim()}</span>
+                                  </p>
+
+                                  {fb.retryData && (
+                                    <div className="bg-violet-50 rounded-xl px-4 py-3 space-y-2">
+                                      <p className="text-xs font-semibold text-violet-400 uppercase tracking-wider mb-2">Simpler explanation</p>
+                                      {fb.retryData.simpler_explanation
+                                        .split('\n')
+                                        .filter(line => line.trim().length > 0)
+                                        .reduce((pairs, line, idx, arr) => {
+                                          if (idx % 2 === 0) pairs.push([line, arr[idx + 1] || ''])
+                                          return pairs
+                                        }, [])
+                                        .map((pair, pi) => (
+                                          <div key={pi} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-6">
+                                            <p className="text-slate-800 text-sm leading-relaxed sm:w-1/2">{pair[0]}</p>
+                                            <p className="text-slate-500 text-sm leading-relaxed sm:w-1/2" dir="rtl" style={PERSIAN_FONT}>{pair[1]}</p>
+                                          </div>
+                                        ))
+                                      }
+                                    </div>
+                                  )}
+
+                                  {fb.retryData && !fb.showRetry && (
+                                    <button
+                                      onClick={() => setFeedback(prev => ({ ...prev, [i]: { ...prev[i], showRetry: true } }))}
+                                      className="text-sm bg-amber-50 hover:bg-amber-100 text-amber-700 font-medium px-4 py-2 rounded-xl transition-colors"
+                                    >
+                                      Try again →
+                                    </button>
+                                  )}
+
+                                  {fb.showRetry && fb.retryData && (
+                                    <div className="space-y-2 bg-emerald-50 rounded-xl px-4 py-3">
+                                      <p className="text-slate-700 text-sm">{fb.retryData.new_practice.split(' | ')[0]}</p>
+                                      <input
+                                        type="text"
+                                        value={fb.retryAnswer}
+                                        onChange={(e) => setFeedback(prev => ({ ...prev, [i]: { ...prev[i], retryAnswer: e.target.value } }))}
+                                        placeholder="Your answer..."
+                                        disabled={fb.retryChecked}
+                                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:bg-slate-50"
+                                      />
+                                      {!fb.retryChecked ? (
+                                        <button
+                                          onClick={() => {
+                                            const correct = (fb.retryData.new_practice.split(' | ')[1] || '').trim().toLowerCase()
+                                            const userAns = fb.retryAnswer.trim().toLowerCase()
+                                            setFeedback(prev => ({
+                                              ...prev,
+                                              [i]: { ...prev[i], retryChecked: true, retryFeedback: userAns === correct ? 'correct' : 'wrong' },
+                                            }))
+                                          }}
+                                          className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-2 rounded-xl transition-colors"
+                                        >
+                                          Check
+                                        </button>
+                                      ) : (
+                                        <p className={`text-sm font-medium ${fb.retryFeedback === 'correct' ? 'text-emerald-600' : 'text-red-500'}`}>
+                                          {fb.retryFeedback === 'correct'
+                                            ? '✓ Well done!'
+                                            : `✗ Correct: ${(fb.retryData.new_practice.split(' | ')[1] || '').trim()}`}
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )
                     })}
                   </div>
 
-                  {!showCorrections ? (
+                  {Object.keys(feedback).length === 0 && (
                     <button
-                      onClick={() => setShowCorrections(true)}
-                      className="mt-5 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 rounded-xl transition-colors text-sm"
+                      onClick={handleCheckAnswers}
+                      disabled={checkingAnswers}
+                      className="mt-5 w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white font-medium py-2.5 rounded-xl transition-colors text-sm"
                     >
-                      Check Answers
+                      {checkingAnswers ? 'Checking...' : 'Check Answers'}
                     </button>
-                  ) : (
-                    <p className="mt-4 text-center text-xs text-slate-400">
-                      Well done! Ask a new question below 👇
+                  )}
+
+                  {Object.keys(feedback).length === result.practice_exercises.length &&
+                    Object.values(feedback).every(f => f.status === 'correct') && (
+                    <p className="mt-4 text-center text-sm text-emerald-600 font-medium">
+                      🎉 All correct! Great work!
                     </p>
                   )}
                 </div>
