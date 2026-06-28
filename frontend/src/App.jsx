@@ -13,6 +13,8 @@ function StudentView() {
   const [result, setResult] = useState(null)
   const [revealed, setRevealed] = useState({ books: false, grammar: false, practice: false })
   const [error, setError] = useState(null)
+  const [practiceAnswers, setPracticeAnswers] = useState({})
+  const [showCorrections, setShowCorrections] = useState(false)
 
   useEffect(() => {
     fetch('/api/students/')
@@ -44,6 +46,8 @@ function StudentView() {
       }
       const data = await res.json()
       setResult(data)
+      setPracticeAnswers({})
+      setShowCorrections(false)
       setInput('')
     } catch (e) {
       setError(e.message)
@@ -153,7 +157,7 @@ function StudentView() {
                 style={PERSIAN_FONT}
               >
                 <span className="text-lg">📖</span>
-                <span>جملات مشابه از کتاب</span>
+                <span>Similar sentences from the book</span>
               </button>
             ) : (
               <div className="bg-white rounded-2xl px-5 py-4 shadow-sm border border-sky-100 fade-in">
@@ -161,7 +165,7 @@ function StudentView() {
                   className="text-xs font-semibold uppercase tracking-wider text-sky-400 mb-3"
                   style={PERSIAN_FONT}
                 >
-                  از کتاب
+                  From the Book
                 </p>
                 <div className="space-y-3">
                   {result.book_sentences.map((s, i) => (
@@ -185,7 +189,7 @@ function StudentView() {
                   style={PERSIAN_FONT}
                 >
                   <span className="text-lg">✏️</span>
-                  <span>نکات گرامری</span>
+                  <span>Grammar points</span>
                 </button>
               ) : (
                 <div className="bg-white rounded-2xl px-5 py-4 shadow-sm border border-violet-100 fade-in">
@@ -193,11 +197,24 @@ function StudentView() {
                     className="text-xs font-semibold uppercase tracking-wider text-violet-400 mb-3"
                     style={PERSIAN_FONT}
                   >
-                    نکته گرامری
+                    Grammar Point
                   </p>
-                  <p className="text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
-                    {result.grammar_point}
-                  </p>
+                  <div className="space-y-3">
+                    {result.grammar_point
+                      .split('\n')
+                      .filter(line => line.trim().length > 0)
+                      .reduce((pairs, line, i, arr) => {
+                        if (i % 2 === 0) pairs.push([line, arr[i + 1] || ''])
+                        return pairs
+                      }, [])
+                      .map((pair, i) => (
+                        <div key={i} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-6">
+                          <p className="text-slate-800 text-sm leading-relaxed sm:w-1/2">{pair[0]}</p>
+                          <p className="text-slate-500 text-sm leading-relaxed sm:w-1/2" dir="rtl" style={PERSIAN_FONT}>{pair[1]}</p>
+                        </div>
+                      ))
+                    }
+                  </div>
                 </div>
               ))}
 
@@ -210,26 +227,60 @@ function StudentView() {
                   style={PERSIAN_FONT}
                 >
                   <span className="text-lg">📝</span>
-                  <span>تمرین</span>
+                  <span>Practice</span>
                 </button>
               ) : (
                 <div className="bg-white rounded-2xl px-5 py-4 shadow-sm border border-emerald-100 fade-in">
-                  <p
-                    className="text-xs font-semibold uppercase tracking-wider text-emerald-500 mb-3"
-                    style={PERSIAN_FONT}
-                  >
-                    تمرین
+                  <p className="text-xs font-semibold uppercase tracking-wider text-emerald-500 mb-3">
+                    Practice
                   </p>
-                  <div className="space-y-3">
-                    {result.practice_exercises.map((ex, i) => (
-                      <div key={i} className="flex gap-3">
-                        <span className="text-emerald-400 font-mono text-xs mt-1 select-none shrink-0">
-                          {i + 1}.
-                        </span>
-                        <p className="text-slate-700 text-sm leading-relaxed">{ex}</p>
-                      </div>
-                    ))}
+                  <div className="space-y-4">
+                    {result.practice_exercises.map((ex, i) => {
+                      const parts = ex.split(' | ')
+                      const prompt = parts[0] || ex
+                      const correctAnswer = parts[1] || ''
+                      return (
+                        <div key={i} className="space-y-1">
+                          <div className="flex gap-3 items-start">
+                            <span className="text-emerald-400 font-mono text-xs mt-3 select-none shrink-0">
+                              {i + 1}.
+                            </span>
+                            <div className="flex-1">
+                              <p className="text-slate-700 text-sm leading-relaxed mb-1">{prompt}</p>
+                              <input
+                                type="text"
+                                value={practiceAnswers[i] || ''}
+                                onChange={(e) =>
+                                  setPracticeAnswers((prev) => ({ ...prev, [i]: e.target.value }))
+                                }
+                                placeholder="Your answer..."
+                                disabled={showCorrections}
+                                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent disabled:bg-slate-50 disabled:text-slate-400"
+                              />
+                              {showCorrections && correctAnswer && (
+                                <p className="mt-1 text-xs text-emerald-600 font-medium">
+                                  ✓ {correctAnswer}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
+
+                  {!showCorrections ? (
+                    <button
+                      onClick={() => setShowCorrections(true)}
+                      className="mt-5 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 rounded-xl transition-colors text-sm"
+                    >
+                      Check Answers
+                    </button>
+                  ) : (
+                    <p className="mt-4 text-center text-xs text-slate-400">
+                      Well done! Ask a new question below 👇
+                    </p>
+                  )}
                 </div>
               ))}
           </div>

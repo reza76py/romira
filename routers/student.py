@@ -65,9 +65,11 @@ Return ONLY valid JSON — no markdown fences, no explanation — with exactly t
 {{
   "english_translation": "natural English translation of what the student wrote",
   "book_sentences": {json.dumps(book_sentences, ensure_ascii=False)},
-  "grammar_point": "one grammar point relevant to the student's errors or the book sentences; explain in Persian first, then English; max 3 sentences; simple language for level {student.level}",
-  "practice_exercises": ["fill-in-the-blank or error-correction sentence 1", "sentence 2", "sentence 3"]
-}}"""
+  "grammar_point": "one grammar point relevant to the student's errors or the book sentences. Format as alternating lines: first line is the English explanation, second line is the Persian translation of that explanation, then repeat for each sentence. Max 3 pairs. Simple language for level {student.level}. No blank lines between pairs.",
+  "practice_exercises": ["She ___ (want) to go. | wants", "sentence 2 with blank | answer", "sentence 3 with blank | answer"]
+}}
+
+Each practice exercise MUST follow this exact format: fill-in-the-blank sentence with ___ for the missing word, then a space, then a pipe character |, then a space, then the correct answer. Example: "She ___ (want) to go out. | wants". No other format is acceptable."""
 
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
