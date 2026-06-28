@@ -91,7 +91,7 @@ class StudentInteractionResponse(BaseModel):
     student_id: int
     persian_input: str
     english_translation: str
-    book_sentences: list[str]
+    book_sentences: list[dict] | list[str] = []
     grammar_point: str
     practice_exercises: list[str]
     created_at: datetime

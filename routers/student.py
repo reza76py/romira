@@ -6,6 +6,7 @@ import schemas
 import anthropic
 import os
 import json
+import re
 from dotenv import load_dotenv
 from dependencies import embedding_model, collection
 
@@ -46,6 +47,24 @@ def ask(body: schemas.StudentInteractionCreate, db: Session = Depends(get_db)):
     query_embedding = embedding_model.encode(english_for_search).tolist()
     results = collection.query(query_embeddings=[query_embedding], n_results=2)
     book_sentences = results["documents"][0]
+    book_metadatas = results["metadatas"][0] if results.get("metadatas") else []
+
+    # Format sentences with location
+    book_sentences_with_location = []
+    for i, sentence in enumerate(book_sentences):
+        meta = book_metadatas[i] if i < len(book_metadatas) else {}
+        chapter_name = meta.get("chapter_name", "")
+        paragraph = meta.get("paragraph", "")
+        physical_page = max(1, meta.get("page", 6) - 6)
+        line = meta.get("line_on_page", "")
+        if chapter_name and paragraph:
+            location = f"(Ch: {chapter_name}, p.{physical_page})"
+        else:
+            location = ""
+        book_sentences_with_location.append({
+            "text": sentence,
+            "location": location
+        })
 
     # Step 3: Generate the full learning response in one call
     prompt = f"""You are Romira, an English learning assistant for a Persian-speaking student.
@@ -59,12 +78,12 @@ The student wrote in Persian: "{body.persian_input}"
 English translation: "{english_for_search}"
 
 Relevant sentences from their book:
-{json.dumps(book_sentences, ensure_ascii=False)}
+{json.dumps(book_sentences_with_location, ensure_ascii=False)}
 
-Return ONLY valid JSON — no markdown fences, no explanation — with exactly these keys:
+CRITICAL: Return ONLY a valid JSON object. No markdown, no backticks, no explanation before or after. The response must start with {{ and end with }}. Do not include any text outside the JSON object.
 {{
   "english_translation": "natural English translation of what the student wrote",
-  "book_sentences": {json.dumps(book_sentences, ensure_ascii=False)},
+  "book_sentences": {json.dumps(book_sentences_with_location, ensure_ascii=False)},
   "grammar_point": "یک یا دو جمله کوتاه فارسی درباره نکته گرامری. فقط فارسی. هیچ کلمه انگلیسی نباشد. هر جمله در یک خط جداگانه.",
   "practice_exercises": ["She ___ (want) to go. | wants", "sentence 2 with blank | answer", "sentence 3 with blank | answer"]
 }}
@@ -78,11 +97,23 @@ Each practice exercise MUST follow this exact format: fill-in-the-blank sentence
     )
 
     raw = response.content[0].text.strip()
+
+    # Strip markdown fences if present
+    raw = raw.strip()
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[-1]
         raw = raw.rsplit("```", 1)[0].strip()
 
-    result = json.loads(raw)
+    # Fix common JSON issues — trailing commas
+    raw = re.sub(r',\s*}', '}', raw)
+    raw = re.sub(r',\s*]', ']', raw)
+
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError as e:
+        print(f"JSON parse error: {e}")
+        print(f"Raw response: {raw[:500]}")
+        raise HTTPException(status_code=500, detail=f"AI returned invalid JSON: {str(e)}")
 
     # Save interaction
     interaction = models.StudentInteraction(
@@ -233,9 +264,18 @@ def get_interactions(student_id: int, db: Session = Depends(get_db)):
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    return (
+    interactions = (
         db.query(models.StudentInteraction)
         .filter(models.StudentInteraction.student_id == student_id)
         .order_by(models.StudentInteraction.created_at.desc())
         .all()
     )
+
+    for ix in interactions:
+        try:
+            bs = json.loads(ix.book_sentences) if ix.book_sentences else []
+        except Exception:
+            bs = []
+        ix.book_sentences = bs
+
+    return interactions

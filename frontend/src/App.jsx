@@ -260,9 +260,12 @@ function StudentView({ student, onExit }) {
               <div className="bg-white rounded-2xl border border-slate-200 px-5 py-4 space-y-2 fade-in">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">From the Book</p>
                 {result.book_sentences.map((s, i) => (
-                  <p key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-teal-300 pl-3">
-                    {s}
-                  </p>
+                  <div key={i} className="border-l-2 border-teal-300 pl-3">
+                    <p className="text-slate-700 text-sm leading-relaxed">{s.text || s}</p>
+                    {s.location && (
+                      <p className="text-xs text-slate-400 mt-0.5">{s.location}</p>
+                    )}
+                  </div>
                 ))}
               </div>
             )}
