@@ -1,5 +1,10 @@
 import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom'
+import {
+  ResponsiveContainer,
+  LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
+  BarChart, Bar,
+} from 'recharts'
 
 const PERSIAN_FONT = { fontFamily: "'Vazirmatn', sans-serif" }
 
@@ -426,9 +431,12 @@ function TeacherView() {
   const [students, setStudents] = useState([])
   const [selectedId, setSelectedId] = useState('')
   const [interactions, setInteractions] = useState([])
-  const [loadingInteractions, setLoadingInteractions] = useState(false)
+  const [errors, setErrors] = useState([])
+  const [loadingData, setLoadingData] = useState(false)
   const [newPassword, setNewPassword] = useState('')
   const [passwordSaved, setPasswordSaved] = useState(false)
+  const [shownPassword, setShownPassword] = useState(null)
+  const [loadingPassword, setLoadingPassword] = useState(false)
 
   function handleLogin(e) {
     e.preventDefault()
@@ -452,13 +460,20 @@ function TeacherView() {
 
   useEffect(() => {
     if (!selectedId || !isAuthed) return
-    setLoadingInteractions(true)
+    setLoadingData(true)
     setPasswordSaved(false)
     setNewPassword('')
-    fetch(`/api/student/${selectedId}/interactions`)
-      .then((r) => r.json())
-      .then(setInteractions)
-      .finally(() => setLoadingInteractions(false))
+    setShownPassword(null)
+    setErrors([])
+    Promise.all([
+      fetch(`/api/student/${selectedId}/interactions`).then((r) => r.json()),
+      fetch(`/api/student/${selectedId}/errors`).then((r) => r.json()),
+    ])
+      .then(([interactionsData, errorsData]) => {
+        setInteractions(interactionsData)
+        setErrors(errorsData)
+      })
+      .finally(() => setLoadingData(false))
   }, [selectedId, isAuthed])
 
   async function handleSetPassword(e) {
@@ -472,14 +487,72 @@ function TeacherView() {
     if (res.ok) {
       setPasswordSaved(true)
       setNewPassword('')
+      setShownPassword(null)
     }
   }
 
+  async function handleShowPassword() {
+    if (shownPassword !== null) { setShownPassword(null); return }
+    setLoadingPassword(true)
+    try {
+      const res = await fetch(`/api/student/${selectedId}/password`)
+      const data = await res.json()
+      setShownPassword(data.password || '(not set)')
+    } finally {
+      setLoadingPassword(false)
+    }
+  }
+
+  // ── Derived data for charts ──────────────────────────────────────────────
+
+  const selectedStudent = students.find((s) => String(s.id) === selectedId)
+
   const oneWeekAgo = new Date()
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7)
-  const thisWeekCount = interactions.filter(
-    (i) => new Date(i.created_at) >= oneWeekAgo
-  ).length
+  const thisWeekCount = interactions.filter((i) => new Date(i.created_at) >= oneWeekAgo).length
+
+  // Activity: sessions per day over last 14 days
+  const last14Days = Array.from({ length: 14 }, (_, i) => {
+    const d = new Date()
+    d.setDate(d.getDate() - (13 - i))
+    return d.toISOString().slice(0, 10)
+  })
+  const activityByDate = {}
+  interactions.forEach(({ created_at }) => {
+    const date = new Date(created_at).toISOString().slice(0, 10)
+    activityByDate[date] = (activityByDate[date] || 0) + 1
+  })
+  const activityData = last14Days.map((date) => ({
+    date: date.slice(5), // MM-DD
+    sessions: activityByDate[date] || 0,
+  }))
+
+  // Errors: count by wrong value (top 8)
+  const errorCounts = {}
+  errors.forEach(({ wrong }) => {
+    const key = wrong.trim()
+    errorCounts[key] = (errorCounts[key] || 0) + 1
+  })
+  const errorsChartData = Object.entries(errorCounts)
+    .map(([wrong, count]) => ({ wrong, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8)
+
+  // Grammar topics: first non-empty line of grammar_point, count by topic
+  const grammarCounts = {}
+  interactions.forEach(({ grammar_point }) => {
+    if (!grammar_point) return
+    const firstLine = grammar_point.split('\n').find((l) => l.trim()) || ''
+    const topic = firstLine.length > 30 ? firstLine.slice(0, 30) + '…' : firstLine
+    if (topic) grammarCounts[topic] = (grammarCounts[topic] || 0) + 1
+  })
+  const grammarChartData = Object.entries(grammarCounts)
+    .map(([topic, count]) => ({ topic, count }))
+    .sort((a, b) => b.count - a.count)
+
+  const shortTick = (str) => (str.length > 12 ? str.slice(0, 12) + '…' : str)
+
+  // ── Login screen ─────────────────────────────────────────────────────────
 
   if (!isAuthed) {
     return (
@@ -522,14 +595,14 @@ function TeacherView() {
     )
   }
 
+  // ── Authenticated dashboard ───────────────────────────────────────────────
+
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-10">
         <div>
           <h1 className="text-base font-bold text-slate-800">Romira — Teacher Dashboard</h1>
-          <p className="text-slate-400 text-xs" style={PERSIAN_FONT}>
-            داشبورد معلم
-          </p>
+          <p className="text-slate-400 text-xs" style={PERSIAN_FONT}>داشبورد معلم</p>
         </div>
         <Link to="/" className="text-sm text-teal-600 hover:text-teal-800 transition-colors">
           ← Student view
@@ -537,9 +610,11 @@ function TeacherView() {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-6 space-y-4">
-        {/* Summary + student selector card */}
+
+        {/* ── Section 1: Student Info ─────────────────────────────────── */}
         <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
-          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+          {/* Selector + stats */}
+          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
             <div className="flex items-center gap-3">
               <label className="text-sm font-medium text-slate-500">Student</label>
               <select
@@ -552,63 +627,178 @@ function TeacherView() {
                 ))}
               </select>
             </div>
-            <div className="text-sm text-slate-500">
-              This week: <span className="font-semibold text-slate-700">{thisWeekCount}</span> sessions
+            <div className="flex gap-4 text-sm text-slate-500">
+              <span>This week: <span className="font-semibold text-slate-700">{thisWeekCount}</span></span>
+              <span>Total: <span className="font-semibold text-slate-700">{interactions.length}</span></span>
             </div>
           </div>
 
-          {/* Set Password */}
-          <form onSubmit={handleSetPassword} className="flex items-center gap-2 pt-2 border-t border-slate-100">
-            <label className="text-sm font-medium text-slate-500 shrink-0">Set password</label>
-            <input
-              type="text"
-              value={newPassword}
-              onChange={(e) => { setNewPassword(e.target.value); setPasswordSaved(false) }}
-              placeholder="New code..."
-              className="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400"
-            />
-            <button
-              type="submit"
-              disabled={!newPassword}
-              className="bg-teal-600 hover:bg-teal-700 disabled:bg-teal-300 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition-colors shrink-0"
-            >
-              Save
-            </button>
-            {passwordSaved && <span className="text-emerald-600 text-sm shrink-0">Password updated ✓</span>}
-          </form>
+          {/* Student info */}
+          {selectedStudent && (
+            <div className="flex gap-6 text-sm pt-1 border-t border-slate-100">
+              <div>
+                <p className="text-xs text-slate-400 uppercase tracking-wider mb-0.5">Level</p>
+                <p className="text-slate-700 font-medium">{selectedStudent.level || 'Not assessed yet'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400 uppercase tracking-wider mb-0.5">Book</p>
+                <p className="text-slate-700 font-medium">{selectedStudent.book}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Password management */}
+          <div className="pt-2 border-t border-slate-100 space-y-2">
+            <form onSubmit={handleSetPassword} className="flex items-center gap-2">
+              <label className="text-sm font-medium text-slate-500 shrink-0">Set password</label>
+              <input
+                type="text"
+                value={newPassword}
+                onChange={(e) => { setNewPassword(e.target.value); setPasswordSaved(false) }}
+                placeholder="New code..."
+                className="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400"
+              />
+              <button
+                type="submit"
+                disabled={!newPassword}
+                className="bg-teal-600 hover:bg-teal-700 disabled:bg-teal-300 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition-colors shrink-0"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={handleShowPassword}
+                disabled={loadingPassword}
+                className="text-sm text-slate-500 hover:text-slate-700 border border-slate-200 hover:border-slate-300 px-3 py-1.5 rounded-lg transition-colors shrink-0"
+              >
+                {loadingPassword ? '...' : shownPassword !== null ? 'Hide' : 'Show'}
+              </button>
+            </form>
+            {passwordSaved && <p className="text-emerald-600 text-sm">Password updated ✓</p>}
+            {shownPassword !== null && (
+              <p className="text-sm text-slate-700">
+                Current code: <span className="font-mono font-semibold">{shownPassword}</span>
+              </p>
+            )}
+          </div>
         </div>
 
-        {/* Interactions list */}
-        {loadingInteractions ? (
-          <div className="flex justify-center py-10">
-            <div className="w-6 h-6 rounded-full border-4 border-teal-200 border-t-teal-600 animate-spin" />
+        {loadingData ? (
+          <div className="flex justify-center py-16">
+            <div className="w-7 h-7 rounded-full border-4 border-teal-200 border-t-teal-600 animate-spin" />
           </div>
-        ) : interactions.length === 0 ? (
-          <p className="text-center text-slate-400 text-sm py-10">No sessions yet for this student.</p>
         ) : (
-          interactions.map((interaction) => (
-            <div key={interaction.id} className="bg-white rounded-2xl border border-slate-200 px-5 py-4 space-y-3">
-              <div className="flex justify-between items-start">
-                <p className="text-sm text-slate-500">
-                  {new Date(interaction.created_at).toLocaleString()}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Persian input</p>
-                <p className="text-slate-700 text-sm" dir="rtl" style={PERSIAN_FONT}>{interaction.persian_input}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">English</p>
-                <p className="text-slate-800 text-sm">{interaction.english_translation}</p>
-              </div>
-              {interaction.grammar_point && (
-                <div>
-                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Grammar point</p>
-                  <p className="text-slate-700 text-sm whitespace-pre-line">{interaction.grammar_point}</p>
+          <>
+            {/* ── Section 2: Activity Chart ───────────────────────────────── */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+              <h2 className="text-sm font-semibold text-slate-700 mb-4">Activity — last 14 days</h2>
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={activityData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                  <Tooltip
+                    contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+                    labelStyle={{ color: '#475569' }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="sessions"
+                    stroke="#0d9488"
+                    strokeWidth={2}
+                    dot={{ r: 3, fill: '#0d9488' }}
+                    activeDot={{ r: 5 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* ── Section 3: Common Errors ────────────────────────────────── */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+              <h2 className="text-sm font-semibold text-slate-700 mb-4">Common Errors</h2>
+              {errorsChartData.length === 0 ? (
+                <p className="text-slate-400 text-sm text-center py-8">No errors recorded yet</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={errorsChartData} margin={{ top: 4, right: 8, left: -20, bottom: 30 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                    <XAxis
+                      dataKey="wrong"
+                      tick={{ fontSize: 11, fill: '#94a3b8' }}
+                      tickFormatter={shortTick}
+                      angle={-35}
+                      textAnchor="end"
+                      interval={0}
+                    />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                    <Tooltip
+                      contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+                      formatter={(val, _name, props) => [val, props.payload.wrong]}
+                    />
+                    <Bar dataKey="count" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
+            {/* ── Section 4: Grammar Topics ───────────────────────────────── */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+              <h2 className="text-sm font-semibold text-slate-700 mb-4">Grammar Topics Taught</h2>
+              {grammarChartData.length === 0 ? (
+                <p className="text-slate-400 text-sm text-center py-8">No sessions yet</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={grammarChartData} margin={{ top: 4, right: 8, left: -20, bottom: 30 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                    <XAxis
+                      dataKey="topic"
+                      tick={{ fontSize: 11, fill: '#94a3b8' }}
+                      tickFormatter={shortTick}
+                      angle={-35}
+                      textAnchor="end"
+                      interval={0}
+                    />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                    <Tooltip
+                      contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+                      formatter={(val, _name, props) => [val, props.payload.topic]}
+                    />
+                    <Bar dataKey="count" fill="#7c3aed" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
+            {/* ── Section 5: Interaction History ─────────────────────────── */}
+            <div>
+              <h2 className="text-sm font-semibold text-slate-700 mb-3 px-1">Session History</h2>
+              {interactions.length === 0 ? (
+                <p className="text-center text-slate-400 text-sm py-10">No sessions yet for this student.</p>
+              ) : (
+                <div className="space-y-4">
+                  {interactions.map((interaction) => (
+                    <div key={interaction.id} className="bg-white rounded-2xl border border-slate-200 px-5 py-4 space-y-3">
+                      <p className="text-sm text-slate-400">{new Date(interaction.created_at).toLocaleString()}</p>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Persian input</p>
+                        <p className="text-slate-700 text-sm" dir="rtl" style={PERSIAN_FONT}>{interaction.persian_input}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">English</p>
+                        <p className="text-slate-800 text-sm">{interaction.english_translation}</p>
+                      </div>
+                      {interaction.grammar_point && (
+                        <div>
+                          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Grammar point</p>
+                          <p className="text-slate-700 text-sm whitespace-pre-line">{interaction.grammar_point}</p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
-          ))
+          </>
         )}
       </main>
     </div>

@@ -148,6 +148,27 @@ No markdown, no extra text, only JSON."""
     return result
 
 
+@router.get("/{student_id}/errors", response_model=list[schemas.StudentErrorResponse])
+def get_errors(student_id: int, db: Session = Depends(get_db)):
+    student = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    return (
+        db.query(models.StudentError)
+        .filter(models.StudentError.student_id == student_id)
+        .order_by(models.StudentError.noted_at.desc())
+        .all()
+    )
+
+
+@router.get("/{student_id}/password")
+def get_password(student_id: int, db: Session = Depends(get_db)):
+    student = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    return {"password": student.password or ""}
+
+
 @router.post("/login")
 def login(body: schemas.StudentLogin, db: Session = Depends(get_db)):
     student = db.query(models.Student).filter(models.Student.password == body.password).first()
