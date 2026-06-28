@@ -5,19 +5,13 @@ import models
 import anthropic
 import os
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
-import chromadb
+from dependencies import embedding_model, collection
 
 load_dotenv()
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-# Load embedding model and ChromaDB once at startup
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
-collection = chroma_client.get_collection("grace_darling")
 
 
 @router.post("/generate-exercise")

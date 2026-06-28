@@ -14,6 +14,7 @@ class Student(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     errors = relationship("StudentError", back_populates="student")
+    interactions = relationship("StudentInteraction", back_populates="student")
 
 
 class StudentError(Base):
@@ -26,3 +27,18 @@ class StudentError(Base):
     noted_at = Column(DateTime, default=datetime.utcnow)
 
     student = relationship("Student", back_populates="errors")
+
+
+class StudentInteraction(Base):
+    __tablename__ = "student_interactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"))
+    persian_input = Column(Text)
+    english_translation = Column(Text)
+    book_sentences = Column(Text)       # stored as JSON array string
+    grammar_point = Column(Text)
+    practice_exercises = Column(Text)   # stored as JSON array string
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    student = relationship("Student", back_populates="interactions")

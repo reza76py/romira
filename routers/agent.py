@@ -5,8 +5,7 @@ import models
 import anthropic
 import os
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
-import chromadb
+from dependencies import embedding_model, collection
 import json
 
 load_dotenv()
@@ -14,10 +13,6 @@ load_dotenv()
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
-collection = chroma_client.get_collection("grace_darling")
 
 # --- Tool definitions ---
 

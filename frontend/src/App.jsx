@@ -1,47 +1,50 @@
 import { useState, useEffect } from 'react'
-import ReactMarkdown from 'react-markdown'
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom'
 
-export default function App() {
+const PERSIAN_FONT = { fontFamily: "'Vazirmatn', sans-serif" }
+
+// ─── Student View ────────────────────────────────────────────────────────────
+
+function StudentView() {
   const [students, setStudents] = useState([])
   const [selectedId, setSelectedId] = useState('')
+  const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
+  const [revealed, setRevealed] = useState({ books: false, grammar: false, practice: false })
   const [error, setError] = useState(null)
-  const [fetchingStudents, setFetchingStudents] = useState(true)
-  const [showAgentLog, setShowAgentLog] = useState(false)
 
   useEffect(() => {
     fetch('/api/students/')
-      .then((r) => {
-        if (!r.ok) throw new Error(`Failed to load students (${r.status})`)
-        return r.json()
-      })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((data) => {
         setStudents(data)
         if (data.length > 0) setSelectedId(String(data[0].id))
       })
-      .catch((e) => setError(e.message))
-      .finally(() => setFetchingStudents(false))
+      .catch(() => setError('خطا در بارگذاری دانش‌آموزان'))
   }, [])
 
   const selectedStudent = students.find((s) => String(s.id) === selectedId)
 
-  async function prepareLesson() {
-    if (!selectedId) return
+  async function handleSend() {
+    if (!input.trim() || !selectedId || loading) return
     setLoading(true)
     setResult(null)
+    setRevealed({ books: false, grammar: false, practice: false })
     setError(null)
-    setShowAgentLog(false)
     try {
-      const res = await fetch(`/api/agent/prepare-lesson?student_id=${selectedId}`, {
+      const res = await fetch('/api/student/ask', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ student_id: parseInt(selectedId), persian_input: input.trim() }),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
-        throw new Error(body.detail || `Server error (${res.status})`)
+        throw new Error(body.detail || `خطا (${res.status})`)
       }
       const data = await res.json()
       setResult(data)
+      setInput('')
     } catch (e) {
       setError(e.message)
     } finally {
@@ -49,167 +52,409 @@ export default function App() {
     }
   }
 
-  const plan = result?.lesson_plan
-  const log = result?.tool_calls_log
+  function reveal(key) {
+    setRevealed((r) => ({ ...r, [key]: true }))
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800">
+    <div className="flex flex-col bg-amber-50" style={{ height: '100dvh' }}>
       {/* Header */}
-      <header className="bg-indigo-700 text-white shadow-md">
-        <div className="max-w-3xl mx-auto px-6 py-5 flex items-center gap-3">
-          <span className="text-2xl">📚</span>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight leading-tight">Romira</h1>
-            <p className="text-indigo-200 text-sm">AI English Teaching Assistant</p>
-          </div>
+      <header className="bg-teal-700 text-white px-4 py-3 flex justify-between items-center shrink-0">
+        <div>
+          <h1 className="text-base font-bold leading-tight">Romira</h1>
+          <p className="text-teal-200 text-xs" style={PERSIAN_FONT}>
+            دستیار یادگیری انگلیسی
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {students.length > 0 && (
+            <select
+              value={selectedId}
+              onChange={(e) => {
+                setSelectedId(e.target.value)
+                setResult(null)
+                setError(null)
+              }}
+              className="text-sm text-teal-900 bg-white rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-teal-300"
+            >
+              {students.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <Link
+            to="/teacher"
+            className="text-xs text-teal-200 hover:text-white transition-colors"
+            style={PERSIAN_FONT}
+          >
+            معلم
+          </Link>
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-6 py-8 space-y-6">
-
-        {/* Student selector */}
-        <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-4">
-            Select Student
-          </h2>
-          {fetchingStudents ? (
-            <p className="text-slate-400 text-sm">Loading students…</p>
-          ) : students.length === 0 ? (
-            <p className="text-slate-400 text-sm">No students found.</p>
-          ) : (
-            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-end">
-              <div className="flex-1">
-                <select
-                  value={selectedId}
-                  onChange={(e) => { setSelectedId(e.target.value); setResult(null); setError(null) }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                >
-                  {students.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name} — {s.level}</option>
-                  ))}
-                </select>
-                {selectedStudent && (
-                  <p className="mt-2 text-xs text-slate-400">
-                    Reading: <span className="text-slate-600 font-medium">{selectedStudent.book}</span>
-                    {selectedStudent.errors?.length > 0 && (
-                      <> · {selectedStudent.errors.length} known error{selectedStudent.errors.length !== 1 ? 's' : ''}</>
-                    )}
-                  </p>
-                )}
-              </div>
-              <button
-                onClick={prepareLesson}
-                disabled={loading || !selectedId}
-                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-semibold px-5 py-2.5 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-              >
-                {loading ? <><Spinner />Preparing lesson…</> : 'Prepare Lesson'}
-              </button>
-            </div>
-          )}
-        </section>
-
-        {/* Error */}
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-red-700 text-sm">
-            <strong>Error:</strong> {error}
+      {/* Scrollable content */}
+      <main className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+        {/* Welcome state */}
+        {!result && !loading && !error && (
+          <div className="flex flex-col items-center justify-center h-full text-center pb-10">
+            <p className="text-4xl mb-4">👋</p>
+            <p className="text-slate-500 text-base leading-relaxed" style={PERSIAN_FONT}>
+              سلام {selectedStudent?.name || 'رویا'}!
+            </p>
+            <p className="text-slate-400 text-sm mt-1" style={PERSIAN_FONT}>
+              امروز چی می‌خوای یاد بگیری؟
+            </p>
           </div>
         )}
 
-        {/* Loading skeleton */}
-        {loading && (
-          <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-3 animate-pulse">
-            <div className="h-4 bg-slate-200 rounded w-1/3" />
-            <div className="h-3 bg-slate-100 rounded w-full" />
-            <div className="h-3 bg-slate-100 rounded w-5/6" />
-            <div className="h-3 bg-slate-100 rounded w-4/6" />
-            <div className="h-3 bg-slate-100 rounded w-full mt-4" />
-            <div className="h-3 bg-slate-100 rounded w-3/4" />
-          </section>
+        {/* Error */}
+        {error && (
+          <div
+            className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 text-red-700 text-sm fade-in"
+            dir="rtl"
+            style={PERSIAN_FONT}
+          >
+            {error}
+          </div>
         )}
 
-        {/* Lesson plan result */}
-        {plan && !loading && (
-          <>
-            {/* Errors targeted */}
-            {plan.errors_targeted?.length > 0 && (
-              <section className="bg-amber-50 rounded-2xl border border-amber-100 p-6">
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-amber-500 mb-3">
-                  Errors Targeted
-                </h2>
-                <div className="flex flex-wrap gap-2">
-                  {plan.errors_targeted.map((e, i) => (
-                    <span key={i} className="bg-amber-100 text-amber-800 text-xs font-mono px-3 py-1 rounded-full">
-                      {e}
-                    </span>
+        {/* Loading */}
+        {loading && (
+          <div className="bg-white rounded-2xl px-5 py-8 shadow-sm border border-slate-100 text-center fade-in">
+            <div className="flex justify-center mb-3">
+              <div className="w-7 h-7 border-4 border-teal-200 border-t-teal-600 rounded-full animate-spin" />
+            </div>
+            <p className="text-slate-400 text-sm" style={PERSIAN_FONT}>
+              در حال پردازش...
+            </p>
+          </div>
+        )}
+
+        {/* Result — progressive reveal */}
+        {result && !loading && (
+          <div className="space-y-3">
+            {/* Part 1: English translation — always shown */}
+            <div className="bg-white rounded-2xl px-5 py-4 shadow-sm border border-slate-100 fade-in">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                Translation
+              </p>
+              <p className="text-slate-800 text-base leading-relaxed">
+                {result.english_translation}
+              </p>
+            </div>
+
+            {/* Part 2: Book sentences */}
+            {!revealed.books ? (
+              <button
+                onClick={() => reveal('books')}
+                className="w-full bg-sky-50 hover:bg-sky-100 text-sky-700 font-medium rounded-2xl px-5 py-4 transition-colors flex items-center justify-between fade-in"
+                style={PERSIAN_FONT}
+              >
+                <span className="text-lg">📖</span>
+                <span>جملات مشابه از کتاب</span>
+              </button>
+            ) : (
+              <div className="bg-white rounded-2xl px-5 py-4 shadow-sm border border-sky-100 fade-in">
+                <p
+                  className="text-xs font-semibold uppercase tracking-wider text-sky-400 mb-3"
+                  style={PERSIAN_FONT}
+                >
+                  از کتاب
+                </p>
+                <div className="space-y-3">
+                  {result.book_sentences.map((s, i) => (
+                    <div key={i} className="flex gap-3">
+                      <span className="text-sky-300 font-mono text-xs mt-1 select-none shrink-0">
+                        {i + 1}.
+                      </span>
+                      <p className="text-slate-700 text-sm leading-relaxed italic">{s}</p>
+                    </div>
                   ))}
                 </div>
-              </section>
+              </div>
             )}
 
-            {/* Warm-up exercise */}
-            <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-4">
-                Warm-up Exercise
-              </h2>
-              <div className="prose prose-slate prose-sm max-w-none">
-                <ReactMarkdown>{plan.warm_up_exercise}</ReactMarkdown>
-              </div>
-            </section>
-
-            {/* Main exercise */}
-            <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-4">
-                Main Grammar Exercise
-              </h2>
-              <div className="prose prose-slate prose-sm max-w-none">
-                <ReactMarkdown>{plan.main_exercise}</ReactMarkdown>
-              </div>
-            </section>
-
-            {/* Suggested next topic */}
-            {plan.suggested_next_topic && (
-              <section className="bg-indigo-50 rounded-2xl border border-indigo-100 p-6">
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-indigo-400 mb-2">
-                  Suggested Next Topic
-                </h2>
-                <p className="text-slate-700 text-sm">{plan.suggested_next_topic}</p>
-              </section>
-            )}
-
-            {/* Agent log toggle */}
-            {log?.length > 0 && (
-              <section className="bg-slate-100 rounded-2xl border border-slate-200 p-6">
+            {/* Part 3: Grammar — only after books revealed */}
+            {revealed.books &&
+              (!revealed.grammar ? (
                 <button
-                  onClick={() => setShowAgentLog(!showAgentLog)}
-                  className="text-sm font-semibold text-slate-500 hover:text-slate-700 flex items-center gap-2"
+                  onClick={() => reveal('grammar')}
+                  className="w-full bg-violet-50 hover:bg-violet-100 text-violet-700 font-medium rounded-2xl px-5 py-4 transition-colors flex items-center justify-between fade-in"
+                  style={PERSIAN_FONT}
                 >
-                  <span>{showAgentLog ? '▾' : '▸'}</span>
-                  Agent thinking — {log.length} tool calls
+                  <span className="text-lg">✏️</span>
+                  <span>نکات گرامری</span>
                 </button>
-                {showAgentLog && (
-                  <ol className="mt-4 space-y-2">
-                    {log.map((call, i) => (
-                      <li key={i} className="text-xs text-slate-600 font-mono bg-white rounded-lg px-4 py-2 border border-slate-200">
-                        <span className="text-indigo-400 font-bold">{i + 1}. {call.tool}</span>
-                        <span className="text-slate-400 ml-2">{JSON.stringify(call.input)}</span>
-                      </li>
+              ) : (
+                <div className="bg-white rounded-2xl px-5 py-4 shadow-sm border border-violet-100 fade-in">
+                  <p
+                    className="text-xs font-semibold uppercase tracking-wider text-violet-400 mb-3"
+                    style={PERSIAN_FONT}
+                  >
+                    نکته گرامری
+                  </p>
+                  <p className="text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
+                    {result.grammar_point}
+                  </p>
+                </div>
+              ))}
+
+            {/* Part 4: Practice — only after grammar revealed */}
+            {revealed.grammar &&
+              (!revealed.practice ? (
+                <button
+                  onClick={() => reveal('practice')}
+                  className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-medium rounded-2xl px-5 py-4 transition-colors flex items-center justify-between fade-in"
+                  style={PERSIAN_FONT}
+                >
+                  <span className="text-lg">📝</span>
+                  <span>تمرین</span>
+                </button>
+              ) : (
+                <div className="bg-white rounded-2xl px-5 py-4 shadow-sm border border-emerald-100 fade-in">
+                  <p
+                    className="text-xs font-semibold uppercase tracking-wider text-emerald-500 mb-3"
+                    style={PERSIAN_FONT}
+                  >
+                    تمرین
+                  </p>
+                  <div className="space-y-3">
+                    {result.practice_exercises.map((ex, i) => (
+                      <div key={i} className="flex gap-3">
+                        <span className="text-emerald-400 font-mono text-xs mt-1 select-none shrink-0">
+                          {i + 1}.
+                        </span>
+                        <p className="text-slate-700 text-sm leading-relaxed">{ex}</p>
+                      </div>
                     ))}
-                  </ol>
-                )}
-              </section>
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+      </main>
+
+      {/* Input — sticky footer */}
+      <div className="shrink-0 bg-white border-t border-slate-200 px-4 pt-3 pb-4">
+        <div className="flex gap-2 items-end">
+          <textarea
+            dir="rtl"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                handleSend()
+              }
+            }}
+            placeholder="اینجا بنویس..."
+            rows={2}
+            disabled={loading}
+            className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-slate-800 text-base resize-none focus:outline-none focus:ring-2 focus:ring-teal-400 focus:border-transparent disabled:bg-slate-50"
+            style={PERSIAN_FONT}
+          />
+          <button
+            onClick={handleSend}
+            disabled={loading || !input.trim()}
+            className="bg-teal-600 hover:bg-teal-700 disabled:bg-teal-200 text-white font-medium px-4 py-2.5 rounded-xl transition-colors shrink-0"
+            style={PERSIAN_FONT}
+          >
+            ارسال
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Teacher View ────────────────────────────────────────────────────────────
+
+function TeacherView() {
+  const [password, setPassword] = useState('')
+  const [isAuthed, setIsAuthed] = useState(false)
+  const [authError, setAuthError] = useState(false)
+  const [students, setStudents] = useState([])
+  const [selectedId, setSelectedId] = useState('')
+  const [interactions, setInteractions] = useState([])
+  const [loadingInteractions, setLoadingInteractions] = useState(false)
+
+  function handleLogin(e) {
+    e.preventDefault()
+    if (password === 'romira2025') {
+      setIsAuthed(true)
+      setAuthError(false)
+    } else {
+      setAuthError(true)
+    }
+  }
+
+  useEffect(() => {
+    if (!isAuthed) return
+    fetch('/api/students/')
+      .then((r) => r.json())
+      .then((data) => {
+        setStudents(data)
+        if (data.length > 0) setSelectedId(String(data[0].id))
+      })
+  }, [isAuthed])
+
+  useEffect(() => {
+    if (!selectedId || !isAuthed) return
+    setLoadingInteractions(true)
+    fetch(`/api/student/${selectedId}/interactions`)
+      .then((r) => r.json())
+      .then(setInteractions)
+      .finally(() => setLoadingInteractions(false))
+  }, [selectedId, isAuthed])
+
+  const oneWeekAgo = new Date()
+  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7)
+  const thisWeekCount = interactions.filter(
+    (i) => new Date(i.created_at) >= oneWeekAgo
+  ).length
+
+  if (!isAuthed) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 w-full max-w-sm">
+          <h1 className="text-xl font-bold text-slate-800 mb-1">Teacher Dashboard</h1>
+          <p className="text-slate-400 text-sm mb-6" style={PERSIAN_FONT}>
+            داشبورد معلم
+          </p>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="رمز عبور"
+              autoFocus
+              className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-right"
+              style={PERSIAN_FONT}
+            />
+            {authError && (
+              <p className="text-red-500 text-sm text-right" style={PERSIAN_FONT}>
+                رمز عبور اشتباه است
+              </p>
             )}
-          </>
+            <button
+              type="submit"
+              className="w-full bg-teal-600 hover:bg-teal-700 text-white font-medium py-2.5 rounded-xl transition-colors"
+              style={PERSIAN_FONT}
+            >
+              ورود
+            </button>
+          </form>
+          <div className="mt-4 text-center">
+            <Link to="/" className="text-xs text-slate-400 hover:text-slate-600 transition-colors">
+              ← Back to student view
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-10">
+        <div>
+          <h1 className="text-base font-bold text-slate-800">Romira — Teacher Dashboard</h1>
+          <p className="text-slate-400 text-xs" style={PERSIAN_FONT}>
+            داشبورد معلم
+          </p>
+        </div>
+        <Link to="/" className="text-sm text-teal-600 hover:text-teal-800 transition-colors">
+          ← Student view
+        </Link>
+      </header>
+
+      <main className="max-w-3xl mx-auto px-4 py-6 space-y-4">
+        {/* Summary card */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium text-slate-500">Student</label>
+            <select
+              value={selectedId}
+              onChange={(e) => setSelectedId(e.target.value)}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            >
+              {students.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} — {s.level}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex gap-6 text-center">
+            <div>
+              <p className="text-2xl font-bold text-teal-600">{thisWeekCount}</p>
+              <p className="text-xs text-slate-400">this week</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-slate-600">{interactions.length}</p>
+              <p className="text-xs text-slate-400">total</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Interactions list */}
+        {loadingInteractions ? (
+          <div className="text-center py-10 text-slate-400 text-sm">Loading...</div>
+        ) : interactions.length === 0 ? (
+          <div className="text-center py-10 text-slate-400 text-sm" style={PERSIAN_FONT}>
+            هنوز تمرینی ثبت نشده
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {interactions.map((ix) => (
+              <div key={ix.id} className="bg-white rounded-2xl border border-slate-200 p-5">
+                <p className="text-xs text-slate-400 mb-3">
+                  {new Date(ix.created_at).toLocaleString('en-GB', {
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </p>
+                <div className="space-y-2">
+                  <div dir="rtl" className="bg-amber-50 rounded-xl px-4 py-3">
+                    <p className="text-xs text-amber-500 mb-1" style={PERSIAN_FONT}>
+                      ورودی فارسی
+                    </p>
+                    <p className="text-slate-800 text-sm" style={PERSIAN_FONT}>
+                      {ix.persian_input}
+                    </p>
+                  </div>
+                  <div className="bg-slate-50 rounded-xl px-4 py-3">
+                    <p className="text-xs text-slate-400 mb-1">English translation</p>
+                    <p className="text-slate-700 text-sm">{ix.english_translation}</p>
+                  </div>
+                  <div className="bg-violet-50 rounded-xl px-4 py-3">
+                    <p className="text-xs text-violet-400 mb-1">Grammar point</p>
+                    <p className="text-slate-700 text-sm whitespace-pre-wrap">{ix.grammar_point}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </main>
     </div>
   )
 }
 
-function Spinner() {
+// ─── App ─────────────────────────────────────────────────────────────────────
+
+export default function App() {
   return (
-    <svg className="h-4 w-4 animate-spin text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-    </svg>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<StudentView />} />
+        <Route path="/teacher" element={<TeacherView />} />
+      </Routes>
+    </BrowserRouter>
   )
 }
