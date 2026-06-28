@@ -40,6 +40,14 @@ class StudentResponse(StudentBase):
         from_attributes = True
 
 
+class StudentLogin(BaseModel):
+    password: str
+
+
+class SetPassword(BaseModel):
+    password: str
+
+
 class StudentInteractionCreate(BaseModel):
     student_id: int
     persian_input: str

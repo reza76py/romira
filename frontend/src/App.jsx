@@ -3,11 +3,72 @@ import { BrowserRouter, Routes, Route, Link } from 'react-router-dom'
 
 const PERSIAN_FONT = { fontFamily: "'Vazirmatn', sans-serif" }
 
+// ─── Login View ───────────────────────────────────────────────────────────────
+
+function LoginView({ onLogin }) {
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (!password || loading) return
+    setLoading(true)
+    setError(false)
+    try {
+      const res = await fetch('/api/student/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      })
+      if (!res.ok) {
+        setError(true)
+        return
+      }
+      const data = await res.json()
+      onLogin(data)
+    } catch {
+      setError(true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-amber-50 flex items-center justify-center px-4">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 w-full max-w-sm">
+        <h1 className="text-2xl font-bold text-slate-800 mb-1">Romira</h1>
+        <p className="text-slate-400 text-sm mb-8" style={PERSIAN_FONT}>
+          دستیار یادگیری انگلیسی
+        </p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Enter your code"
+            autoFocus
+            className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+          />
+          {error && (
+            <p className="text-red-500 text-sm">Incorrect code. Please try again.</p>
+          )}
+          <button
+            type="submit"
+            disabled={loading || !password}
+            className="w-full bg-teal-600 hover:bg-teal-700 disabled:bg-teal-300 text-white font-medium py-3 rounded-xl transition-colors"
+          >
+            {loading ? 'Checking...' : 'Enter'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ─── Student View ────────────────────────────────────────────────────────────
 
-function StudentView() {
-  const [students, setStudents] = useState([])
-  const [selectedId, setSelectedId] = useState('')
+function StudentView({ student, onExit }) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
@@ -18,20 +79,8 @@ function StudentView() {
   const [feedback, setFeedback] = useState({})
   const [checkingAnswers, setCheckingAnswers] = useState(false)
 
-  useEffect(() => {
-    fetch('/api/students/')
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((data) => {
-        setStudents(data)
-        if (data.length > 0) setSelectedId(String(data[0].id))
-      })
-      .catch(() => setError('خطا در بارگذاری دانش‌آموزان'))
-  }, [])
-
-  const selectedStudent = students.find((s) => String(s.id) === selectedId)
-
   async function handleSend() {
-    if (!input.trim() || !selectedId || loading) return
+    if (!input.trim() || loading) return
     setLoading(true)
     setResult(null)
     setRevealed({ books: false, grammar: false, practice: false })
@@ -40,7 +89,7 @@ function StudentView() {
       const res = await fetch('/api/student/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ student_id: parseInt(selectedId), persian_input: input.trim() }),
+        body: JSON.stringify({ student_id: student.id, persian_input: input.trim() }),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
@@ -83,7 +132,7 @@ function StudentView() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              student_id: parseInt(selectedId),
+              student_id: student.id,
               wrong_answer: practiceAnswers[i] || '',
               correct_answer: parts[1] || '',
               grammar_point: result.grammar_point,
@@ -112,294 +161,225 @@ function StudentView() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {students.length > 0 && (
-            <select
-              value={selectedId}
-              onChange={(e) => {
-                setSelectedId(e.target.value)
-                setResult(null)
-                setError(null)
-              }}
-              className="text-sm text-teal-900 bg-white rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-teal-300"
-            >
-              {students.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          )}
-          <Link
-            to="/teacher"
-            className="text-xs text-teal-200 hover:text-white transition-colors"
-            style={PERSIAN_FONT}
+          <span className="text-sm text-teal-100 font-medium">Hello, {student.name} 👋</span>
+          <button
+            onClick={onExit}
+            className="text-xs text-teal-200 hover:text-white border border-teal-500 hover:border-teal-300 px-3 py-1.5 rounded-lg transition-colors"
           >
-            معلم
-          </Link>
+            Exit
+          </button>
         </div>
       </header>
 
-      {/* Scrollable content */}
-      <main className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        {/* Welcome state */}
-        {!result && !loading && !error && (
-          <div className="flex flex-col items-center justify-center h-full text-center pb-10">
-            <p className="text-4xl mb-4">👋</p>
-            <p className="text-slate-500 text-base leading-relaxed" style={PERSIAN_FONT}>
-              سلام {selectedStudent?.name || 'رویا'}!
-            </p>
-            <p className="text-slate-400 text-sm mt-1" style={PERSIAN_FONT}>
-              امروز چی می‌خوای یاد بگیری؟
-            </p>
-          </div>
-        )}
+      {/* Scrollable main content */}
+      <main className="flex-1 overflow-y-auto px-4 py-5 space-y-4">
 
-        {/* Error */}
         {error && (
-          <div
-            className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 text-red-700 text-sm fade-in"
-            dir="rtl"
-            style={PERSIAN_FONT}
-          >
+          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-600" style={PERSIAN_FONT}>
             {error}
           </div>
         )}
 
-        {/* Loading */}
         {loading && (
-          <div className="bg-white rounded-2xl px-5 py-8 shadow-sm border border-slate-100 text-center fade-in">
-            <div className="flex justify-center mb-3">
-              <div className="w-7 h-7 border-4 border-teal-200 border-t-teal-600 rounded-full animate-spin" />
-            </div>
-            <p className="text-slate-400 text-sm" style={PERSIAN_FONT}>
-              در حال پردازش...
-            </p>
+          <div className="flex justify-center py-10">
+            <div className="w-7 h-7 rounded-full border-4 border-teal-200 border-t-teal-600 animate-spin" />
           </div>
         )}
 
-        {/* Result — progressive reveal */}
-        {result && !loading && (
-          <div className="space-y-3">
-            {/* Part 1: English translation — always shown */}
-            <div className="bg-white rounded-2xl px-5 py-4 shadow-sm border border-slate-100 fade-in">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
-                Translation
-              </p>
-              <p className="text-slate-800 text-base leading-relaxed">
-                {result.english_translation}
-              </p>
+        {result && (
+          <div className="space-y-4">
+            {/* Translation */}
+            <div className="bg-white rounded-2xl border border-slate-200 px-5 py-4 fade-in">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Translation</p>
+              <p className="text-slate-800 text-base leading-relaxed">{result.english_translation}</p>
             </div>
 
-            {/* Part 2: Book sentences */}
+            {/* Book sentences */}
             {!revealed.books ? (
               <button
                 onClick={() => reveal('books')}
-                className="w-full bg-sky-50 hover:bg-sky-100 text-sky-700 font-medium rounded-2xl px-5 py-4 transition-colors flex items-center justify-between fade-in"
-                style={PERSIAN_FONT}
+                className="w-full text-left bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 text-sm text-teal-700 font-medium transition-colors"
               >
-                <span className="text-lg">📖</span>
-                <span>Similar sentences from the book</span>
+                Similar sentences from the book 📖
               </button>
             ) : (
-              <div className="bg-white rounded-2xl px-5 py-4 shadow-sm border border-sky-100 fade-in">
-                <p
-                  className="text-xs font-semibold uppercase tracking-wider text-sky-400 mb-3"
-                  style={PERSIAN_FONT}
-                >
-                  From the Book
-                </p>
-                <div className="space-y-3">
-                  {result.book_sentences.map((s, i) => (
-                    <div key={i} className="flex gap-3">
-                      <span className="text-sky-300 font-mono text-xs mt-1 select-none shrink-0">
-                        {i + 1}.
-                      </span>
-                      <p className="text-slate-700 text-sm leading-relaxed italic">{s}</p>
-                    </div>
-                  ))}
-                </div>
+              <div className="bg-white rounded-2xl border border-slate-200 px-5 py-4 space-y-2 fade-in">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">From the Book</p>
+                {result.book_sentences.map((s, i) => (
+                  <p key={i} className="text-slate-700 text-sm leading-relaxed border-l-2 border-teal-300 pl-3">
+                    {s}
+                  </p>
+                ))}
               </div>
             )}
 
-            {/* Part 3: Grammar — only after books revealed */}
-            {revealed.books &&
-              (!revealed.grammar ? (
-                <button
-                  onClick={() => reveal('grammar')}
-                  className="w-full bg-violet-50 hover:bg-violet-100 text-violet-700 font-medium rounded-2xl px-5 py-4 transition-colors flex items-center justify-between fade-in"
-                  style={PERSIAN_FONT}
-                >
-                  <span className="text-lg">✏️</span>
-                  <span>Grammar points</span>
-                </button>
-              ) : (
-                <div className="bg-white rounded-2xl px-5 py-4 shadow-sm border border-violet-100 fade-in">
-                  <p
-                    className="text-xs font-semibold uppercase tracking-wider text-violet-400 mb-3"
-                    style={PERSIAN_FONT}
-                  >
-                    Grammar Point
-                  </p>
-                  <div className="space-y-3">
-                    {result.grammar_point
-                      .split('\n')
-                      .filter(line => line.trim().length > 0)
-                      .reduce((pairs, line, i, arr) => {
-                        if (i % 2 === 0) pairs.push([line, arr[i + 1] || ''])
-                        return pairs
-                      }, [])
-                      .map((pair, i) => (
-                        <div key={i} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-6">
-                          <p className="text-slate-800 text-sm leading-relaxed sm:w-1/2">{pair[0]}</p>
-                          <p className="text-slate-500 text-sm leading-relaxed sm:w-1/2" dir="rtl" style={PERSIAN_FONT}>{pair[1]}</p>
-                        </div>
-                      ))
-                    }
-                  </div>
+            {/* Grammar */}
+            {revealed.books && !revealed.grammar ? (
+              <button
+                onClick={() => reveal('grammar')}
+                className="w-full text-left bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 text-sm text-teal-700 font-medium transition-colors"
+              >
+                Grammar points ✏️
+              </button>
+            ) : revealed.grammar ? (
+              <div className="bg-white rounded-2xl border border-slate-200 px-5 py-4 fade-in">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Grammar Point</p>
+                <div className="space-y-3">
+                  {result.grammar_point
+                    .split('\n')
+                    .filter(line => line.trim().length > 0)
+                    .reduce((pairs, line, idx, arr) => {
+                      if (idx % 2 === 0) pairs.push([line, arr[idx + 1] || ''])
+                      return pairs
+                    }, [])
+                    .map((pair, pi) => (
+                      <div key={pi} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-6">
+                        <p className="text-slate-800 text-sm leading-relaxed sm:w-1/2">{pair[0]}</p>
+                        <p className="text-slate-500 text-sm leading-relaxed sm:w-1/2" dir="rtl" style={PERSIAN_FONT}>{pair[1]}</p>
+                      </div>
+                    ))
+                  }
                 </div>
-              ))}
+              </div>
+            ) : null}
 
-            {/* Part 4: Practice — only after grammar revealed */}
-            {revealed.grammar &&
-              (!revealed.practice ? (
-                <button
-                  onClick={() => reveal('practice')}
-                  className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-medium rounded-2xl px-5 py-4 transition-colors flex items-center justify-between fade-in"
-                  style={PERSIAN_FONT}
-                >
-                  <span className="text-lg">📝</span>
-                  <span>Practice</span>
-                </button>
-              ) : (
-                <div className="bg-white rounded-2xl px-5 py-4 shadow-sm border border-emerald-100 fade-in">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-emerald-500 mb-3">
-                    Practice
-                  </p>
-                  <div className="space-y-6">
-                    {result.practice_exercises.map((ex, i) => {
-                      const parts = ex.split(' | ')
-                      const prompt = parts[0] || ex
-                      const fb = feedback[i]
-
-                      return (
-                        <div key={i} className="space-y-2">
-                          {/* Question + input */}
-                          <div className="flex gap-3 items-start">
-                            <span className="text-emerald-400 font-mono text-xs mt-3 select-none shrink-0">{i + 1}.</span>
-                            <div className="flex-1">
-                              <p className="text-slate-700 text-sm leading-relaxed mb-1">{prompt}</p>
-                              <input
-                                type="text"
-                                value={practiceAnswers[i] || ''}
-                                onChange={(e) => setPracticeAnswers((prev) => ({ ...prev, [i]: e.target.value }))}
-                                placeholder="Your answer..."
-                                disabled={!!fb}
-                                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:bg-slate-50 disabled:text-slate-400"
-                              />
-                            </div>
+            {/* Practice */}
+            {revealed.grammar && !revealed.practice ? (
+              <button
+                onClick={() => reveal('practice')}
+                className="w-full text-left bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 text-sm text-teal-700 font-medium transition-colors"
+              >
+                Practice 📝
+              </button>
+            ) : revealed.practice ? (
+              <div className="bg-white rounded-2xl border border-slate-200 px-5 py-4 fade-in">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Practice</p>
+                <div className="space-y-5">
+                  {result.practice_exercises.map((ex, i) => {
+                    const prompt = ex.split(' | ')[0]
+                    const fb = feedback[i]
+                    return (
+                      <div key={i} className="space-y-2">
+                        <div className="flex flex-col gap-1.5">
+                          <p className="text-slate-800 text-sm">{prompt}</p>
+                          <div className="flex gap-2 items-center">
+                            <input
+                              type="text"
+                              value={practiceAnswers[i] || ''}
+                              onChange={(e) =>
+                                setPracticeAnswers((a) => ({ ...a, [i]: e.target.value }))
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && Object.keys(feedback).length === 0) handleCheckAnswers()
+                              }}
+                              disabled={!!fb}
+                              placeholder="Your answer..."
+                              className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-slate-50"
+                            />
                           </div>
-
-                          {/* Feedback */}
-                          {fb && (
-                            <div className="ml-6">
-                              {fb.status === 'correct' ? (
-                                <p className="text-emerald-600 text-sm font-medium">✓ Correct!</p>
-                              ) : (
-                                <div className="space-y-3">
-                                  <p className="text-red-500 text-sm font-medium">
-                                    ✗ Correct answer: <span className="font-bold">{(ex.split(' | ')[1] || '').trim()}</span>
-                                  </p>
-
-                                  {fb.retryData && (
-                                    <div className="bg-violet-50 rounded-xl px-4 py-3 space-y-2">
-                                      <p className="text-xs font-semibold text-violet-400 uppercase tracking-wider mb-2">Simpler explanation</p>
-                                      {fb.retryData.simpler_explanation
-                                        .split('\n')
-                                        .filter(line => line.trim().length > 0)
-                                        .reduce((pairs, line, idx, arr) => {
-                                          if (idx % 2 === 0) pairs.push([line, arr[idx + 1] || ''])
-                                          return pairs
-                                        }, [])
-                                        .map((pair, pi) => (
-                                          <div key={pi} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-6">
-                                            <p className="text-slate-800 text-sm leading-relaxed sm:w-1/2">{pair[0]}</p>
-                                            <p className="text-slate-500 text-sm leading-relaxed sm:w-1/2" dir="rtl" style={PERSIAN_FONT}>{pair[1]}</p>
-                                          </div>
-                                        ))
-                                      }
-                                    </div>
-                                  )}
-
-                                  {fb.retryData && !fb.showRetry && (
-                                    <button
-                                      onClick={() => setFeedback(prev => ({ ...prev, [i]: { ...prev[i], showRetry: true } }))}
-                                      className="text-sm bg-amber-50 hover:bg-amber-100 text-amber-700 font-medium px-4 py-2 rounded-xl transition-colors"
-                                    >
-                                      Try again →
-                                    </button>
-                                  )}
-
-                                  {fb.showRetry && fb.retryData && (
-                                    <div className="space-y-2 bg-emerald-50 rounded-xl px-4 py-3">
-                                      <p className="text-slate-700 text-sm">{fb.retryData.new_practice.split(' | ')[0]}</p>
-                                      <input
-                                        type="text"
-                                        value={fb.retryAnswer}
-                                        onChange={(e) => setFeedback(prev => ({ ...prev, [i]: { ...prev[i], retryAnswer: e.target.value } }))}
-                                        placeholder="Your answer..."
-                                        disabled={fb.retryChecked}
-                                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:bg-slate-50"
-                                      />
-                                      {!fb.retryChecked ? (
-                                        <button
-                                          onClick={() => {
-                                            const correct = (fb.retryData.new_practice.split(' | ')[1] || '').trim().toLowerCase()
-                                            const userAns = fb.retryAnswer.trim().toLowerCase()
-                                            setFeedback(prev => ({
-                                              ...prev,
-                                              [i]: { ...prev[i], retryChecked: true, retryFeedback: userAns === correct ? 'correct' : 'wrong' },
-                                            }))
-                                          }}
-                                          className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-2 rounded-xl transition-colors"
-                                        >
-                                          Check
-                                        </button>
-                                      ) : (
-                                        <p className={`text-sm font-medium ${fb.retryFeedback === 'correct' ? 'text-emerald-600' : 'text-red-500'}`}>
-                                          {fb.retryFeedback === 'correct'
-                                            ? '✓ Well done!'
-                                            : `✗ Correct: ${(fb.retryData.new_practice.split(' | ')[1] || '').trim()}`}
-                                        </p>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
                         </div>
-                      )
-                    })}
-                  </div>
 
-                  {Object.keys(feedback).length === 0 && (
-                    <button
-                      onClick={handleCheckAnswers}
-                      disabled={checkingAnswers}
-                      className="mt-5 w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white font-medium py-2.5 rounded-xl transition-colors text-sm"
-                    >
-                      {checkingAnswers ? 'Checking...' : 'Check Answers'}
-                    </button>
-                  )}
+                        {/* Feedback */}
+                        {fb && (
+                          <div className="ml-6">
+                            {fb.status === 'correct' ? (
+                              <p className="text-emerald-600 text-sm font-medium">✓ Correct!</p>
+                            ) : (
+                              <div className="space-y-3">
+                                <p className="text-red-500 text-sm font-medium">
+                                  ✗ Correct answer: <span className="font-bold">{(ex.split(' | ')[1] || '').trim()}</span>
+                                </p>
 
-                  {Object.keys(feedback).length === result.practice_exercises.length &&
-                    Object.values(feedback).every(f => f.status === 'correct') && (
-                    <p className="mt-4 text-center text-sm text-emerald-600 font-medium">
-                      🎉 All correct! Great work!
-                    </p>
-                  )}
+                                {fb.retryData && (
+                                  <div className="bg-violet-50 rounded-xl px-4 py-3 space-y-2">
+                                    <p className="text-xs font-semibold text-violet-400 uppercase tracking-wider mb-2">Simpler explanation</p>
+                                    {fb.retryData.simpler_explanation
+                                      .split('\n')
+                                      .filter(line => line.trim().length > 0)
+                                      .reduce((pairs, line, idx, arr) => {
+                                        if (idx % 2 === 0) pairs.push([line, arr[idx + 1] || ''])
+                                        return pairs
+                                      }, [])
+                                      .map((pair, pi) => (
+                                        <div key={pi} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-6">
+                                          <p className="text-slate-800 text-sm leading-relaxed sm:w-1/2">{pair[0]}</p>
+                                          <p className="text-slate-500 text-sm leading-relaxed sm:w-1/2" dir="rtl" style={PERSIAN_FONT}>{pair[1]}</p>
+                                        </div>
+                                      ))
+                                    }
+                                  </div>
+                                )}
+
+                                {fb.retryData && !fb.showRetry && (
+                                  <button
+                                    onClick={() => setFeedback(prev => ({ ...prev, [i]: { ...prev[i], showRetry: true } }))}
+                                    className="text-sm bg-amber-50 hover:bg-amber-100 text-amber-700 font-medium px-4 py-2 rounded-xl transition-colors"
+                                  >
+                                    Try again →
+                                  </button>
+                                )}
+
+                                {fb.showRetry && fb.retryData && (
+                                  <div className="space-y-2 bg-emerald-50 rounded-xl px-4 py-3">
+                                    <p className="text-slate-700 text-sm">{fb.retryData.new_practice.split(' | ')[0]}</p>
+                                    <input
+                                      type="text"
+                                      value={fb.retryAnswer}
+                                      onChange={(e) => setFeedback(prev => ({ ...prev, [i]: { ...prev[i], retryAnswer: e.target.value } }))}
+                                      placeholder="Your answer..."
+                                      disabled={fb.retryChecked}
+                                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:bg-slate-50"
+                                    />
+                                    {!fb.retryChecked ? (
+                                      <button
+                                        onClick={() => {
+                                          const correct = (fb.retryData.new_practice.split(' | ')[1] || '').trim().toLowerCase()
+                                          const userAns = fb.retryAnswer.trim().toLowerCase()
+                                          setFeedback(prev => ({
+                                            ...prev,
+                                            [i]: { ...prev[i], retryChecked: true, retryFeedback: userAns === correct ? 'correct' : 'wrong' },
+                                          }))
+                                        }}
+                                        className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-2 rounded-xl transition-colors"
+                                      >
+                                        Check
+                                      </button>
+                                    ) : (
+                                      <p className={`text-sm font-medium ${fb.retryFeedback === 'correct' ? 'text-emerald-600' : 'text-red-500'}`}>
+                                        {fb.retryFeedback === 'correct'
+                                          ? '✓ Well done!'
+                                          : `✗ Correct: ${(fb.retryData.new_practice.split(' | ')[1] || '').trim()}`}
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
+
+                {Object.keys(feedback).length === 0 && (
+                  <button
+                    onClick={handleCheckAnswers}
+                    disabled={checkingAnswers}
+                    className="mt-5 w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white font-medium py-2.5 rounded-xl transition-colors text-sm"
+                  >
+                    {checkingAnswers ? 'Checking...' : 'Check Answers'}
+                  </button>
+                )}
+
+                {Object.keys(feedback).length === result.practice_exercises.length &&
+                  Object.values(feedback).every(f => f.status === 'correct') && (
+                  <p className="mt-4 text-center text-sm text-emerald-600 font-medium">
+                    🎉 All correct! Great work!
+                  </p>
+                )}
+              </div>
+            ) : null}
           </div>
         )}
       </main>
@@ -447,6 +427,8 @@ function TeacherView() {
   const [selectedId, setSelectedId] = useState('')
   const [interactions, setInteractions] = useState([])
   const [loadingInteractions, setLoadingInteractions] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const [passwordSaved, setPasswordSaved] = useState(false)
 
   function handleLogin(e) {
     e.preventDefault()
@@ -471,11 +453,27 @@ function TeacherView() {
   useEffect(() => {
     if (!selectedId || !isAuthed) return
     setLoadingInteractions(true)
+    setPasswordSaved(false)
+    setNewPassword('')
     fetch(`/api/student/${selectedId}/interactions`)
       .then((r) => r.json())
       .then(setInteractions)
       .finally(() => setLoadingInteractions(false))
   }, [selectedId, isAuthed])
+
+  async function handleSetPassword(e) {
+    e.preventDefault()
+    if (!newPassword || !selectedId) return
+    const res = await fetch(`/api/student/${selectedId}/password`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: newPassword }),
+    })
+    if (res.ok) {
+      setPasswordSaved(true)
+      setNewPassword('')
+    }
+  }
 
   const oneWeekAgo = new Date()
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7)
@@ -539,90 +537,104 @@ function TeacherView() {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-6 space-y-4">
-        {/* Summary card */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-          <div className="flex items-center gap-3">
-            <label className="text-sm font-medium text-slate-500">Student</label>
-            <select
-              value={selectedId}
-              onChange={(e) => setSelectedId(e.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+        {/* Summary + student selector card */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-slate-500">Student</label>
+              <select
+                value={selectedId}
+                onChange={(e) => setSelectedId(e.target.value)}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400"
+              >
+                {students.map((s) => (
+                  <option key={s.id} value={String(s.id)}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="text-sm text-slate-500">
+              This week: <span className="font-semibold text-slate-700">{thisWeekCount}</span> sessions
+            </div>
+          </div>
+
+          {/* Set Password */}
+          <form onSubmit={handleSetPassword} className="flex items-center gap-2 pt-2 border-t border-slate-100">
+            <label className="text-sm font-medium text-slate-500 shrink-0">Set password</label>
+            <input
+              type="text"
+              value={newPassword}
+              onChange={(e) => { setNewPassword(e.target.value); setPasswordSaved(false) }}
+              placeholder="New code..."
+              className="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400"
+            />
+            <button
+              type="submit"
+              disabled={!newPassword}
+              className="bg-teal-600 hover:bg-teal-700 disabled:bg-teal-300 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition-colors shrink-0"
             >
-              {students.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} — {s.level}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex gap-6 text-center">
-            <div>
-              <p className="text-2xl font-bold text-teal-600">{thisWeekCount}</p>
-              <p className="text-xs text-slate-400">this week</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-600">{interactions.length}</p>
-              <p className="text-xs text-slate-400">total</p>
-            </div>
-          </div>
+              Save
+            </button>
+            {passwordSaved && <span className="text-emerald-600 text-sm shrink-0">Password updated ✓</span>}
+          </form>
         </div>
 
         {/* Interactions list */}
         {loadingInteractions ? (
-          <div className="text-center py-10 text-slate-400 text-sm">Loading...</div>
+          <div className="flex justify-center py-10">
+            <div className="w-6 h-6 rounded-full border-4 border-teal-200 border-t-teal-600 animate-spin" />
+          </div>
         ) : interactions.length === 0 ? (
-          <div className="text-center py-10 text-slate-400 text-sm" style={PERSIAN_FONT}>
-            هنوز تمرینی ثبت نشده
-          </div>
+          <p className="text-center text-slate-400 text-sm py-10">No sessions yet for this student.</p>
         ) : (
-          <div className="space-y-3">
-            {interactions.map((ix) => (
-              <div key={ix.id} className="bg-white rounded-2xl border border-slate-200 p-5">
-                <p className="text-xs text-slate-400 mb-3">
-                  {new Date(ix.created_at).toLocaleString('en-GB', {
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
+          interactions.map((interaction) => (
+            <div key={interaction.id} className="bg-white rounded-2xl border border-slate-200 px-5 py-4 space-y-3">
+              <div className="flex justify-between items-start">
+                <p className="text-sm text-slate-500">
+                  {new Date(interaction.created_at).toLocaleString()}
                 </p>
-                <div className="space-y-2">
-                  <div dir="rtl" className="bg-amber-50 rounded-xl px-4 py-3">
-                    <p className="text-xs text-amber-500 mb-1" style={PERSIAN_FONT}>
-                      ورودی فارسی
-                    </p>
-                    <p className="text-slate-800 text-sm" style={PERSIAN_FONT}>
-                      {ix.persian_input}
-                    </p>
-                  </div>
-                  <div className="bg-slate-50 rounded-xl px-4 py-3">
-                    <p className="text-xs text-slate-400 mb-1">English translation</p>
-                    <p className="text-slate-700 text-sm">{ix.english_translation}</p>
-                  </div>
-                  <div className="bg-violet-50 rounded-xl px-4 py-3">
-                    <p className="text-xs text-violet-400 mb-1">Grammar point</p>
-                    <p className="text-slate-700 text-sm whitespace-pre-wrap">{ix.grammar_point}</p>
-                  </div>
-                </div>
               </div>
-            ))}
-          </div>
+              <div>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Persian input</p>
+                <p className="text-slate-700 text-sm" dir="rtl" style={PERSIAN_FONT}>{interaction.persian_input}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">English</p>
+                <p className="text-slate-800 text-sm">{interaction.english_translation}</p>
+              </div>
+              {interaction.grammar_point && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Grammar point</p>
+                  <p className="text-slate-700 text-sm whitespace-pre-line">{interaction.grammar_point}</p>
+                </div>
+              )}
+            </div>
+          ))
         )}
       </main>
     </div>
   )
 }
 
-// ─── App ─────────────────────────────────────────────────────────────────────
+// ─── App ──────────────────────────────────────────────────────────────────────
 
-export default function App() {
+function App() {
+  const [loggedInStudent, setLoggedInStudent] = useState(null)
+
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<StudentView />} />
         <Route path="/teacher" element={<TeacherView />} />
+        <Route
+          path="/*"
+          element={
+            loggedInStudent
+              ? <StudentView student={loggedInStudent} onExit={() => setLoggedInStudent(null)} />
+              : <LoginView onLogin={setLoggedInStudent} />
+          }
+        />
       </Routes>
     </BrowserRouter>
   )
 }
+
+export default App

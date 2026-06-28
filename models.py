@@ -11,6 +11,7 @@ class Student(Base):
     name = Column(String, unique=True, index=True)
     level = Column(String)
     book = Column(String)
+    password = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     errors = relationship("StudentError", back_populates="student")
