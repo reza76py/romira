@@ -117,15 +117,14 @@ The grammar point being practiced was:
 {body.grammar_point}
 
 Do two things:
-1. Explain in very simple terms WHY this is wrong and what the correct rule is.
-   Format: one English sentence, then its Persian translation on the next line. Repeat for up to 2 points.
+1. In Persian only, write ONE short simple sentence explaining why the answer is wrong and what the correct form is. Maximum 15 words in Persian. No English explanation at all.
 2. Give ONE new fill-in-the-blank practice sentence testing the same grammar point.
    Format it exactly as: "The sentence with ___ | correct answer"
    Example: "She ___ (want) to go home. | wants"
 
 Return ONLY valid JSON with these exact keys:
 {{
-  "simpler_explanation": "English line\\nفارسی\\nEnglish line 2\\nفارسی 2",
+  "simpler_explanation": "one short Persian sentence only",
   "new_practice": "She ___ (want) to go home. | wants"
 }}
 

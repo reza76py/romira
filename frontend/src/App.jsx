@@ -296,22 +296,11 @@ function StudentView({ student, onExit }) {
                                 </p>
 
                                 {fb.retryData && (
-                                  <div className="bg-violet-50 rounded-xl px-4 py-3 space-y-2">
-                                    <p className="text-xs font-semibold text-violet-400 uppercase tracking-wider mb-2">Simpler explanation</p>
-                                    {fb.retryData.simpler_explanation
-                                      .split('\n')
-                                      .filter(line => line.trim().length > 0)
-                                      .reduce((pairs, line, idx, arr) => {
-                                        if (idx % 2 === 0) pairs.push([line, arr[idx + 1] || ''])
-                                        return pairs
-                                      }, [])
-                                      .map((pair, pi) => (
-                                        <div key={pi} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-6">
-                                          <p className="text-slate-800 text-sm leading-relaxed sm:w-1/2">{pair[0]}</p>
-                                          <p className="text-slate-500 text-sm leading-relaxed sm:w-1/2" dir="rtl" style={PERSIAN_FONT}>{pair[1]}</p>
-                                        </div>
-                                      ))
-                                    }
+                                  <div className="bg-violet-50 rounded-xl px-4 py-3">
+                                    <p className="text-xs font-semibold text-violet-400 uppercase tracking-wider mb-2">Explanation</p>
+                                    <p className="text-slate-700 text-sm leading-relaxed" dir="rtl" style={PERSIAN_FONT}>
+                                      {fb.retryData.simpler_explanation}
+                                    </p>
                                   </div>
                                 )}
 
@@ -337,24 +326,51 @@ function StudentView({ student, onExit }) {
                                     />
                                     {!fb.retryChecked ? (
                                       <button
-                                        onClick={() => {
+                                        onClick={async () => {
                                           const correct = (fb.retryData.new_practice.split(' | ')[1] || '').trim().toLowerCase()
                                           const userAns = fb.retryAnswer.trim().toLowerCase()
-                                          setFeedback(prev => ({
-                                            ...prev,
-                                            [i]: { ...prev[i], retryChecked: true, retryFeedback: userAns === correct ? 'correct' : 'wrong' },
-                                          }))
+                                          if (userAns === correct) {
+                                            setFeedback(prev => ({
+                                              ...prev,
+                                              [i]: { ...prev[i], retryChecked: true, retryFeedback: 'correct' }
+                                            }))
+                                          } else {
+                                            try {
+                                              const res = await fetch('/api/student/retry', {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({
+                                                  student_id: student.id,
+                                                  wrong_answer: fb.retryAnswer,
+                                                  correct_answer: fb.retryData.new_practice.split(' | ')[1] || '',
+                                                  grammar_point: result.grammar_point
+                                                })
+                                              })
+                                              const newData = await res.json()
+                                              setFeedback(prev => ({
+                                                ...prev,
+                                                [i]: {
+                                                  ...prev[i],
+                                                  retryData: { ...newData },
+                                                  retryAnswer: '',
+                                                  retryChecked: false,
+                                                  retryFeedback: null
+                                                }
+                                              }))
+                                            } catch {
+                                              setFeedback(prev => ({
+                                                ...prev,
+                                                [i]: { ...prev[i], retryChecked: true, retryFeedback: 'wrong' }
+                                              }))
+                                            }
+                                          }
                                         }}
                                         className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-2 rounded-xl transition-colors"
                                       >
                                         Check
                                       </button>
                                     ) : (
-                                      <p className={`text-sm font-medium ${fb.retryFeedback === 'correct' ? 'text-emerald-600' : 'text-red-500'}`}>
-                                        {fb.retryFeedback === 'correct'
-                                          ? '✓ Well done!'
-                                          : `✗ Correct: ${(fb.retryData.new_practice.split(' | ')[1] || '').trim()}`}
-                                      </p>
+                                      <p className="text-sm font-medium text-emerald-600">✓ Well done!</p>
                                     )}
                                   </div>
                                 )}
@@ -527,16 +543,24 @@ function TeacherView() {
     sessions: activityByDate[date] || 0,
   }))
 
-  // Errors: count by wrong value (top 8)
-  const errorCounts = {}
-  errors.forEach(({ wrong }) => {
-    const key = wrong.trim()
-    errorCounts[key] = (errorCounts[key] || 0) + 1
+  // Errors per day (last 14 days)
+  const errorsByDate = {}
+  errors.forEach(({ noted_at }) => {
+    const date = new Date(noted_at).toISOString().slice(0, 10)
+    errorsByDate[date] = (errorsByDate[date] || 0) + 1
   })
-  const errorsChartData = Object.entries(errorCounts)
-    .map(([wrong, count]) => ({ wrong, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 8)
+  const errorsPerDayData = last14Days.map((date) => ({
+    date: date.slice(5),
+    errors: errorsByDate[date] || 0,
+  }))
+
+  // Error trend: cumulative running total sorted by date
+  const errorTrendData = [...errors]
+    .sort((a, b) => new Date(a.noted_at) - new Date(b.noted_at))
+    .map((err, i) => ({
+      date: new Date(err.noted_at).toISOString().slice(5, 10),
+      total: i + 1,
+    }))
 
   // Grammar topics: first non-empty line of grammar_point, count by topic
   const grammarCounts = {}
@@ -550,7 +574,7 @@ function TeacherView() {
     .map(([topic, count]) => ({ topic, count }))
     .sort((a, b) => b.count - a.count)
 
-  const shortTick = (str) => (str.length > 12 ? str.slice(0, 12) + '…' : str)
+  const firstGrammarLine = (gp) => (gp || '').split('\n').find((l) => l.trim()) || ''
 
   // ── Login screen ─────────────────────────────────────────────────────────
 
@@ -558,31 +582,24 @@ function TeacherView() {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 w-full max-w-sm">
-          <h1 className="text-xl font-bold text-slate-800 mb-1">Teacher Dashboard</h1>
-          <p className="text-slate-400 text-sm mb-6" style={PERSIAN_FONT}>
-            داشبورد معلم
-          </p>
+          <h1 className="text-xl font-bold text-slate-800 mb-6">Teacher Dashboard</h1>
           <form onSubmit={handleLogin} className="space-y-4">
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="رمز عبور"
+              placeholder="Password"
               autoFocus
-              className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-right"
-              style={PERSIAN_FONT}
+              className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
             />
             {authError && (
-              <p className="text-red-500 text-sm text-right" style={PERSIAN_FONT}>
-                رمز عبور اشتباه است
-              </p>
+              <p className="text-red-500 text-sm">Incorrect password</p>
             )}
             <button
               type="submit"
               className="w-full bg-teal-600 hover:bg-teal-700 text-white font-medium py-2.5 rounded-xl transition-colors"
-              style={PERSIAN_FONT}
             >
-              ورود
+              Login
             </button>
           </form>
           <div className="mt-4 text-center">
@@ -600,10 +617,7 @@ function TeacherView() {
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-10">
-        <div>
-          <h1 className="text-base font-bold text-slate-800">Romira — Teacher Dashboard</h1>
-          <p className="text-slate-400 text-xs" style={PERSIAN_FONT}>داشبورد معلم</p>
-        </div>
+        <h1 className="text-base font-bold text-slate-800">Romira — Teacher Dashboard</h1>
         <Link to="/" className="text-sm text-teal-600 hover:text-teal-800 transition-colors">
           ← Student view
         </Link>
@@ -713,86 +727,78 @@ function TeacherView() {
               </ResponsiveContainer>
             </div>
 
-            {/* ── Section 3: Common Errors ────────────────────────────────── */}
+            {/* ── Chart A: Errors per Session ──────────────────────────────── */}
             <div className="bg-white rounded-2xl border border-slate-200 p-5">
-              <h2 className="text-sm font-semibold text-slate-700 mb-4">Common Errors</h2>
-              {errorsChartData.length === 0 ? (
+              <h2 className="text-sm font-semibold text-slate-700">Errors per Session</h2>
+              <p className="text-xs text-slate-400 mt-0.5 mb-4">How many mistakes were made each session — lower is better</p>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={errorsPerDayData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} labelStyle={{ color: '#475569' }} />
+                  <Bar dataKey="errors" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* ── Chart B: Error Trend ──────────────────────────────────────── */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+              <h2 className="text-sm font-semibold text-slate-700">Error Trend</h2>
+              <p className="text-xs text-slate-400 mt-0.5 mb-4">Total errors caught over time — flattening curve means improvement</p>
+              {errorTrendData.length === 0 ? (
                 <p className="text-slate-400 text-sm text-center py-8">No errors recorded yet</p>
               ) : (
                 <ResponsiveContainer width="100%" height={200}>
-                  <BarChart data={errorsChartData} margin={{ top: 4, right: 8, left: -20, bottom: 30 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                    <XAxis
-                      dataKey="wrong"
-                      tick={{ fontSize: 11, fill: '#94a3b8' }}
-                      tickFormatter={shortTick}
-                      angle={-35}
-                      textAnchor="end"
-                      interval={0}
-                    />
+                  <LineChart data={errorTrendData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                     <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                    <Tooltip
-                      contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
-                      formatter={(val, _name, props) => [val, props.payload.wrong]}
-                    />
-                    <Bar dataKey="count" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-                  </BarChart>
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} labelStyle={{ color: '#475569' }} />
+                    <Line type="monotone" dataKey="total" stroke="#0d9488" strokeWidth={2} dot={{ r: 3, fill: '#0d9488' }} activeDot={{ r: 5 }} />
+                  </LineChart>
                 </ResponsiveContainer>
               )}
             </div>
 
-            {/* ── Section 4: Grammar Topics ───────────────────────────────── */}
+            {/* ── Chart C: What's Being Practiced ──────────────────────────── */}
             <div className="bg-white rounded-2xl border border-slate-200 p-5">
-              <h2 className="text-sm font-semibold text-slate-700 mb-4">Grammar Topics Taught</h2>
+              <h2 className="text-sm font-semibold text-slate-700">What's Being Practiced</h2>
+              <p className="text-xs text-slate-400 mt-0.5 mb-4">Grammar topics covered in sessions — wider bar = more practice</p>
               {grammarChartData.length === 0 ? (
                 <p className="text-slate-400 text-sm text-center py-8">No sessions yet</p>
               ) : (
-                <ResponsiveContainer width="100%" height={200}>
-                  <BarChart data={grammarChartData} margin={{ top: 4, right: 8, left: -20, bottom: 30 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                    <XAxis
-                      dataKey="topic"
-                      tick={{ fontSize: 11, fill: '#94a3b8' }}
-                      tickFormatter={shortTick}
-                      angle={-35}
-                      textAnchor="end"
-                      interval={0}
-                    />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                    <Tooltip
-                      contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
-                      formatter={(val, _name, props) => [val, props.payload.topic]}
-                    />
-                    <Bar dataKey="count" fill="#7c3aed" radius={[4, 4, 0, 0]} />
+                <ResponsiveContainer width="100%" height={Math.max(200, grammarChartData.length * 40)}>
+                  <BarChart layout="vertical" data={grammarChartData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                    <YAxis type="category" dataKey="topic" width={160} tick={{ fontSize: 11 }} />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
+                    <Bar dataKey="count" fill="#7c3aed" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
             </div>
 
-            {/* ── Section 5: Interaction History ─────────────────────────── */}
-            <div>
-              <h2 className="text-sm font-semibold text-slate-700 mb-3 px-1">Session History</h2>
+            {/* ── Session History ───────────────────────────────────────────── */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+              <h2 className="text-sm font-semibold text-slate-700 mb-3">Session History</h2>
               {interactions.length === 0 ? (
-                <p className="text-center text-slate-400 text-sm py-10">No sessions yet for this student.</p>
+                <p className="text-center text-slate-400 text-sm py-6">No sessions yet for this student.</p>
               ) : (
-                <div className="space-y-4">
+                <div>
+                  <div className="grid grid-cols-4 gap-3 pb-2 border-b border-slate-100">
+                    <p className="text-xs uppercase text-slate-400">Time</p>
+                    <p className="text-xs uppercase text-slate-400">Persian</p>
+                    <p className="text-xs uppercase text-slate-400">English</p>
+                    <p className="text-xs uppercase text-slate-400">Grammar Topic</p>
+                  </div>
                   {interactions.map((interaction) => (
-                    <div key={interaction.id} className="bg-white rounded-2xl border border-slate-200 px-5 py-4 space-y-3">
-                      <p className="text-sm text-slate-400">{new Date(interaction.created_at).toLocaleString()}</p>
-                      <div>
-                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Persian input</p>
-                        <p className="text-slate-700 text-sm" dir="rtl" style={PERSIAN_FONT}>{interaction.persian_input}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">English</p>
-                        <p className="text-slate-800 text-sm">{interaction.english_translation}</p>
-                      </div>
-                      {interaction.grammar_point && (
-                        <div>
-                          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Grammar point</p>
-                          <p className="text-slate-700 text-sm whitespace-pre-line">{interaction.grammar_point}</p>
-                        </div>
-                      )}
+                    <div key={interaction.id} className="grid grid-cols-4 gap-3 py-2 border-b border-slate-100">
+                      <p className="text-sm text-slate-700 truncate">{new Date(interaction.created_at).toLocaleString()}</p>
+                      <p className="text-sm text-slate-700 truncate" dir="rtl" style={PERSIAN_FONT}>{interaction.persian_input}</p>
+                      <p className="text-sm text-slate-700 truncate">{interaction.english_translation}</p>
+                      <p className="text-sm text-slate-700 truncate">{firstGrammarLine(interaction.grammar_point)}</p>
                     </div>
                   ))}
                 </div>
