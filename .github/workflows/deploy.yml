@@ -21,6 +21,8 @@ jobs:
           DB_ROOT_PASSWORD: ${{ secrets.ROMIRA_DB_ROOT_PASSWORD }}
         run: |
           ssh -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_HOST} bash << ENDSSH
+          cd /var/www/romira
+          git fetch origin main && git reset --hard origin/main
           {
             echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}"
             echo "DB_NAME=romira_db"
