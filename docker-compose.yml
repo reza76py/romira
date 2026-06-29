@@ -1,0 +1,45 @@
+services:
+  romira-frontend:
+    build: ./frontend
+    container_name: romira-frontend
+    ports:
+      - "8505:80"
+    depends_on:
+      - romira-backend
+    restart: unless-stopped
+
+  romira-backend:
+    build: .
+    container_name: romira-backend
+    ports:
+      - "8006:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DB_NAME=${DB_NAME:-romira_db}
+      - DB_USER=${DB_USER:-romira_user}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=romira-db
+      - DB_PORT=3306
+    depends_on:
+      - romira-db
+    volumes:
+      - romira_chroma:/app/chroma_db
+    restart: unless-stopped
+
+  romira-db:
+    image: mysql:8.0
+    container_name: romira-db
+    ports:
+      - "3311:3306"
+    environment:
+      - MYSQL_DATABASE=${DB_NAME:-romira_db}
+      - MYSQL_USER=${DB_USER:-romira_user}
+      - MYSQL_PASSWORD=${DB_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD:-rootpassword}
+    volumes:
+      - romira_mysql_data:/var/lib/mysql
+    restart: unless-stopped
+
+volumes:
+  romira_chroma:
+  romira_mysql_data:
