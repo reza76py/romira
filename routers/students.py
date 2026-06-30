@@ -58,3 +58,19 @@ def get_student_errors(student_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Student not found")
 
     return student.errors
+
+
+@router.delete("/{student_id}")
+def delete_student(student_id: int, db: Session = Depends(get_db)):
+    student = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # Delete related records first
+    db.query(models.StudentEvent).filter(models.StudentEvent.student_id == student_id).delete()
+    db.query(models.StudentError).filter(models.StudentError.student_id == student_id).delete()
+    db.query(models.StudentInteraction).filter(models.StudentInteraction.student_id == student_id).delete()
+
+    db.delete(student)
+    db.commit()
+    return {"ok": True}
