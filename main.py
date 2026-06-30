@@ -14,10 +14,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
-app.include_router(students.router)
-app.include_router(chat.router)
-app.include_router(agent.router)
-app.include_router(student.router)
+app.include_router(students.router, prefix="/api")
+app.include_router(chat.router, prefix="/api")
+app.include_router(agent.router, prefix="/api")
+app.include_router(student.router, prefix="/api")
 
 @app.get("/")
 def read_root():
