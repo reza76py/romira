@@ -3,4 +3,4 @@ import chromadb
 
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
-collection = chroma_client.get_collection("grace_darling")
+collection = chroma_client.get_or_create_collection("grace_darling")
