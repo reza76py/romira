@@ -79,9 +79,15 @@ function StudentView({ student, onExit }) {
   const [result, setResult] = useState(null)
   const [revealed, setRevealed] = useState({ books: false, grammar: false, practice: false })
   const [error, setError] = useState(null)
-  const [practiceAnswers, setPracticeAnswers] = useState({})
-  const [showCorrections, setShowCorrections] = useState(false)
+  const [answers, setAnswers] = useState({})
   const [feedback, setFeedback] = useState({})
+  const [explanations, setExplanations] = useState({})
+  const [retryDataMap, setRetryDataMap] = useState({})
+  const [retryTarget, setRetryTarget] = useState(null)
+  const [retryExercise, setRetryExercise] = useState(null)
+  const [retryAnswer, setRetryAnswer] = useState('')
+  const [retryFeedback, setRetryFeedback] = useState(null)
+  const [allCorrect, setAllCorrect] = useState(false)
   const [checkingAnswers, setCheckingAnswers] = useState(false)
   const [sessionId, setSessionId] = useState(null)
   const [sessionStart, setSessionStart] = useState(null)
@@ -126,9 +132,15 @@ function StudentView({ student, onExit }) {
       setSessionStart(Date.now())
       setRetryCount(0)
       setGrammarLineIndex(0)
-      setPracticeAnswers({})
-      setShowCorrections(false)
+      setAnswers({})
       setFeedback({})
+      setExplanations({})
+      setRetryDataMap({})
+      setRetryTarget(null)
+      setRetryExercise(null)
+      setRetryAnswer('')
+      setRetryFeedback(null)
+      setAllCorrect(false)
       setCheckingAnswers(false)
       setInput('')
     } catch (e) {
@@ -144,18 +156,20 @@ function StudentView({ student, onExit }) {
 
   async function handleCheckAnswers() {
     setCheckingAnswers(true)
-    logEvent('submit_answer', { answers: practiceAnswers, interaction_id: sessionId })
+    logEvent('submit_answer', { answers, interaction_id: sessionId })
+    const exs = result.practice_exercises.map(ex => {
+      const [sentence, answer] = ex.split(' | ')
+      return { sentence: sentence.trim(), answer: (answer || '').trim() }
+    })
     const newFeedback = {}
+    const newExplanations = {}
+    const newRetryDataMap = {}
 
-    for (let i = 0; i < result.practice_exercises.length; i++) {
-      const ex = result.practice_exercises[i]
-      const parts = ex.split(' | ')
-      const correctAnswer = (parts[1] || '').trim().toLowerCase()
-      const userAnswer = (practiceAnswers[i] || '').trim().toLowerCase()
-      const isCorrect = userAnswer === correctAnswer
-
-      if (isCorrect) {
-        newFeedback[i] = { status: 'correct', retryData: null, retryAnswer: '', retryChecked: false, retryFeedback: null }
+    for (let i = 0; i < exs.length; i++) {
+      const correct = exs[i].answer.toLowerCase()
+      const user = (answers[i] || '').trim().toLowerCase()
+      if (user === correct) {
+        newFeedback[i] = true
       } else {
         try {
           const res = await fetch('/api/student/retry', {
@@ -163,25 +177,31 @@ function StudentView({ student, onExit }) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               student_id: student.id,
-              wrong_answer: practiceAnswers[i] || '',
-              correct_answer: parts[1] || '',
+              wrong_answer: answers[i] || '',
+              correct_answer: exs[i].answer,
               grammar_point: result.grammar_point,
             }),
           })
           const data = await res.json()
           setRetryCount(prev => prev + 1)
-          logEvent('retry', { wrong_answer: practiceAnswers[i], interaction_id: sessionId })
-          newFeedback[i] = { status: 'wrong', retryData: data, retryAnswer: '', retryChecked: false, retryFeedback: null, showRetry: false }
+          logEvent('retry', { wrong_answer: answers[i], interaction_id: sessionId })
+          newFeedback[i] = false
+          newExplanations[i] = data.simpler_explanation
+          const [rSent, rAns] = (data.new_practice || '').split(' | ')
+          newRetryDataMap[i] = { sentence: (rSent || '').trim(), answer: (rAns || '').trim() }
         } catch {
-          newFeedback[i] = { status: 'wrong', retryData: null, retryAnswer: '', retryChecked: false, retryFeedback: null, showRetry: false }
+          newFeedback[i] = false
         }
       }
     }
 
     setFeedback(newFeedback)
+    setExplanations(newExplanations)
+    setRetryDataMap(newRetryDataMap)
+    const allC = exs.length > 0 && Object.values(newFeedback).every(f => f === true)
+    setAllCorrect(allC)
+    if (allC) closeSession(true)
     setCheckingAnswers(false)
-    const allCorrect = Object.values(newFeedback).every(f => f.status === 'correct')
-    if (allCorrect) closeSession(true)
   }
 
   async function closeSession(allCorrect) {
@@ -216,6 +236,13 @@ function StudentView({ student, onExit }) {
       })
     } catch { /* silent fail */ }
   }
+
+  const exercises = result
+    ? result.practice_exercises.map(ex => {
+        const [sentence, answer] = ex.split(' | ')
+        return { sentence: sentence.trim(), answer: (answer || '').trim() }
+      })
+    : []
 
   return (
     <div className="flex flex-col bg-amber-50" style={{ height: '100dvh' }}>
@@ -256,44 +283,22 @@ function StudentView({ student, onExit }) {
         {result && (
           <div className="space-y-4">
             {/* Translation */}
-            <div className="bg-white rounded-2xl border border-slate-200 px-5 py-4 fade-in">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Translation</p>
-              <p className="text-slate-800 text-base leading-relaxed">{result.english_translation}</p>
+            <div className="bg-gradient-to-r from-emerald-50 to-sky-50 rounded-2xl border-l-4 border-teal-500 px-5 py-5 fade-in shadow-sm">
+              <p className="text-xs font-semibold text-teal-600 uppercase tracking-wider mb-2">Translation</p>
+              <p className="text-slate-800 text-lg leading-relaxed font-medium">{result.english_translation}</p>
             </div>
 
-            {/* Book sentences */}
-            {!revealed.books ? (
-              <button
-                onClick={() => { reveal('books'); logEvent('press_book', { interaction_id: sessionId }) }}
-                className="w-full text-left bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 text-sm text-teal-700 font-medium transition-colors"
-              >
-                Similar sentences from the book 📖
-              </button>
-            ) : (
-              <div className="bg-white rounded-2xl border border-slate-200 px-5 py-4 space-y-2 fade-in">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">From the Book</p>
-                {result.book_sentences.map((s, i) => (
-                  <div key={i} className="border-l-2 border-teal-300 pl-3">
-                    <p className="text-slate-700 text-sm leading-relaxed">{s.text || s}</p>
-                    {s.location && (
-                      <p className="text-xs text-slate-400 mt-0.5">{s.location}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
             {/* Grammar */}
-            {revealed.books && !revealed.grammar ? (
+            {!revealed.grammar ? (
               <button
                 onClick={() => { reveal('grammar'); logEvent('press_grammar', { interaction_id: sessionId }) }}
-                className="w-full text-left bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 text-sm text-teal-700 font-medium transition-colors"
+                className="w-full text-left bg-white hover:bg-purple-50 border border-purple-200 rounded-2xl px-5 py-3 text-sm text-purple-700 font-medium transition-colors"
               >
                 Grammar points ✏️
               </button>
-            ) : revealed.grammar ? (
-              <div className="bg-white rounded-2xl border border-slate-200 px-5 py-4 fade-in">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Grammar Point</p>
+            ) : (
+              <div className="bg-white rounded-2xl border-l-4 border-purple-400 px-5 py-4 fade-in shadow-sm">
+                <p className="text-xs font-semibold text-purple-500 uppercase tracking-wider mb-3">Grammar Point</p>
                 {result.sentence_parts && (
                   <div className="mb-4 p-3 bg-slate-50 rounded-xl text-sm font-medium leading-loose">
                     {result.english_translation.split(' ').map((word, i) => {
@@ -321,100 +326,114 @@ function StudentView({ student, onExit }) {
                 {grammarLineIndex < result.grammar_point.split('\n').filter(l => l.trim()).length && (
                   <button
                     onClick={() => setGrammarLineIndex(prev => prev + 1)}
-                    className="mt-3 text-xs text-teal-500 hover:text-teal-700 font-medium"
+                    className="mt-3 text-xs text-purple-500 hover:text-purple-700 font-medium"
                   >
                     Press Enter or tap to reveal next ↓
                   </button>
                 )}
               </div>
-            ) : null}
+            )}
+
+            {/* From the Book */}
+            {!revealed.books ? (
+              <button
+                onClick={() => { reveal('books'); logEvent('press_book', { interaction_id: sessionId }) }}
+                className="w-full text-left bg-white hover:bg-teal-50 border border-teal-200 rounded-2xl px-5 py-3 text-sm text-teal-700 font-medium transition-colors"
+              >
+                Similar sentences from the book 📖
+              </button>
+            ) : (
+              <div className="bg-white rounded-2xl border-l-4 border-teal-400 px-5 py-4 space-y-2 fade-in shadow-sm">
+                <p className="text-xs font-semibold text-teal-600 uppercase tracking-wider mb-2">From the Book</p>
+                {result.book_sentences.map((s, i) => (
+                  <div key={i} className="border-l-2 border-teal-200 pl-3">
+                    <p className="text-slate-700 text-sm leading-relaxed">{s.text || s}</p>
+                    {s.location && (
+                      <p className="text-xs text-slate-400 mt-0.5">{s.location}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Practice */}
-            {revealed.grammar && !revealed.practice ? (
+            {!revealed.practice ? (
               <button
                 onClick={() => { reveal('practice'); logEvent('press_practice', { interaction_id: sessionId }) }}
-                className="w-full text-left bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 text-sm text-teal-700 font-medium transition-colors"
+                className="w-full text-left bg-white hover:bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3 text-sm text-amber-700 font-medium transition-colors"
               >
                 Practice 📝
               </button>
-            ) : revealed.practice ? (
-              <div className="bg-white rounded-2xl border border-slate-200 px-5 py-4 fade-in">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Practice</p>
+            ) : (
+              <div className="bg-white rounded-2xl border-l-4 border-amber-400 px-5 py-4 fade-in shadow-sm">
+                <p className="text-xs font-semibold text-amber-600 uppercase tracking-wider mb-3">Practice</p>
                 <div className="space-y-5">
-                  {result.practice_exercises.map((ex, i) => {
-                    const prompt = ex.split(' | ')[0]
-                    const fb = feedback[i]
+                  {exercises.map((ex, i) => {
+                    const checked = feedback[i] !== undefined
+                    const isCorrect = feedback[i] === true
                     return (
                       <div key={i} className="space-y-2">
-                        <div className="flex flex-col gap-1.5">
-                          <p className="text-slate-800 text-sm">{prompt}</p>
-                          <div className="flex gap-2 items-center">
-                            <input
-                              type="text"
-                              value={practiceAnswers[i] || ''}
-                              onChange={(e) =>
-                                setPracticeAnswers((a) => ({ ...a, [i]: e.target.value }))
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' && Object.keys(feedback).length === 0) handleCheckAnswers()
-                              }}
-                              disabled={!!fb}
-                              placeholder="Your answer..."
-                              className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-slate-50"
-                            />
-                          </div>
-                        </div>
+                        <p className="text-slate-800 text-sm">{ex.sentence}</p>
+                        <input
+                          type="text"
+                          value={answers[i] || ''}
+                          onChange={(e) => setAnswers(a => ({ ...a, [i]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && Object.keys(feedback).length === 0) handleCheckAnswers()
+                          }}
+                          disabled={checked}
+                          placeholder="Your answer..."
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-slate-50"
+                        />
 
-                        {/* Feedback */}
-                        {fb && (
-                          <div className="ml-6">
-                            {fb.status === 'correct' ? (
+                        {checked && (
+                          <div className="ml-4 space-y-2">
+                            {isCorrect ? (
                               <p className="text-emerald-600 text-sm font-medium">✓ Correct!</p>
                             ) : (
-                              <div className="space-y-3">
+                              <div className="space-y-2">
                                 <p className="text-red-500 text-sm font-medium">
-                                  ✗ Correct answer: <span className="font-bold">{(ex.split(' | ')[1] || '').trim()}</span>
+                                  ✗ Correct answer: <span className="font-bold">{ex.answer}</span>
                                 </p>
-
-                                {fb.retryData && (
-                                  <div className="bg-violet-50 rounded-xl px-4 py-3">
-                                    <p className="text-xs font-semibold text-violet-400 uppercase tracking-wider mb-2">Explanation</p>
+                                {explanations[i] && (
+                                  <div className="bg-purple-50 rounded-xl px-4 py-3">
+                                    <p className="text-xs font-semibold text-purple-400 uppercase tracking-wider mb-1">Explanation</p>
                                     <p className="text-slate-700 text-sm leading-relaxed" dir="rtl" style={PERSIAN_FONT}>
-                                      {fb.retryData.simpler_explanation}
+                                      {explanations[i]}
                                     </p>
                                   </div>
                                 )}
-
-                                {fb.retryData && !fb.showRetry && (
+                                {retryDataMap[i] && retryTarget !== i && (
                                   <button
-                                    onClick={() => setFeedback(prev => ({ ...prev, [i]: { ...prev[i], showRetry: true } }))}
+                                    onClick={() => {
+                                      setRetryTarget(i)
+                                      setRetryExercise(retryDataMap[i])
+                                      setRetryAnswer('')
+                                      setRetryFeedback(null)
+                                    }}
                                     className="text-sm bg-amber-50 hover:bg-amber-100 text-amber-700 font-medium px-4 py-2 rounded-xl transition-colors"
                                   >
                                     Try again →
                                   </button>
                                 )}
-
-                                {fb.showRetry && fb.retryData && (
+                                {retryTarget === i && retryExercise && (
                                   <div className="space-y-2 bg-emerald-50 rounded-xl px-4 py-3">
-                                    <p className="text-slate-700 text-sm">{fb.retryData.new_practice.split(' | ')[0]}</p>
+                                    <p className="text-slate-700 text-sm">{retryExercise.sentence}</p>
                                     <input
                                       type="text"
-                                      value={fb.retryAnswer}
-                                      onChange={(e) => setFeedback(prev => ({ ...prev, [i]: { ...prev[i], retryAnswer: e.target.value } }))}
+                                      value={retryAnswer}
+                                      onChange={(e) => setRetryAnswer(e.target.value)}
+                                      disabled={retryFeedback !== null}
                                       placeholder="Your answer..."
-                                      disabled={fb.retryChecked}
                                       className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:bg-slate-50"
                                     />
-                                    {!fb.retryChecked ? (
+                                    {retryFeedback === null && (
                                       <button
                                         onClick={async () => {
-                                          const correct = (fb.retryData.new_practice.split(' | ')[1] || '').trim().toLowerCase()
-                                          const userAns = fb.retryAnswer.trim().toLowerCase()
-                                          if (userAns === correct) {
-                                            setFeedback(prev => ({
-                                              ...prev,
-                                              [i]: { ...prev[i], retryChecked: true, retryFeedback: 'correct' }
-                                            }))
+                                          const correct = retryExercise.answer.toLowerCase()
+                                          const user = retryAnswer.trim().toLowerCase()
+                                          if (user === correct) {
+                                            setRetryFeedback(true)
                                           } else {
                                             try {
                                               const res = await fetch('/api/student/retry', {
@@ -422,29 +441,21 @@ function StudentView({ student, onExit }) {
                                                 headers: { 'Content-Type': 'application/json' },
                                                 body: JSON.stringify({
                                                   student_id: student.id,
-                                                  wrong_answer: fb.retryAnswer,
-                                                  correct_answer: fb.retryData.new_practice.split(' | ')[1] || '',
+                                                  wrong_answer: retryAnswer,
+                                                  correct_answer: retryExercise.answer,
                                                   grammar_point: result.grammar_point
                                                 })
                                               })
-                                              const newData = await res.json()
+                                              const data = await res.json()
                                               setRetryCount(prev => prev + 1)
-                                              logEvent('retry', { wrong_answer: fb.retryAnswer, interaction_id: sessionId })
-                                              setFeedback(prev => ({
-                                                ...prev,
-                                                [i]: {
-                                                  ...prev[i],
-                                                  retryData: { ...newData },
-                                                  retryAnswer: '',
-                                                  retryChecked: false,
-                                                  retryFeedback: null
-                                                }
-                                              }))
+                                              logEvent('retry', { wrong_answer: retryAnswer, interaction_id: sessionId })
+                                              const [rSent, rAns] = (data.new_practice || '').split(' | ')
+                                              setRetryExercise({ sentence: (rSent || '').trim(), answer: (rAns || '').trim() })
+                                              setExplanations(prev => ({ ...prev, [i]: data.simpler_explanation }))
+                                              setRetryAnswer('')
+                                              setRetryFeedback(null)
                                             } catch {
-                                              setFeedback(prev => ({
-                                                ...prev,
-                                                [i]: { ...prev[i], retryChecked: true, retryFeedback: 'wrong' }
-                                              }))
+                                              setRetryFeedback(false)
                                             }
                                           }
                                         }}
@@ -452,8 +463,12 @@ function StudentView({ student, onExit }) {
                                       >
                                         Check
                                       </button>
-                                    ) : (
+                                    )}
+                                    {retryFeedback === true && (
                                       <p className="text-sm font-medium text-emerald-600">✓ Well done!</p>
+                                    )}
+                                    {retryFeedback === false && (
+                                      <p className="text-sm font-medium text-red-500">✗ Keep practicing!</p>
                                     )}
                                   </div>
                                 )}
@@ -470,20 +485,19 @@ function StudentView({ student, onExit }) {
                   <button
                     onClick={handleCheckAnswers}
                     disabled={checkingAnswers}
-                    className="mt-5 w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white font-medium py-2.5 rounded-xl transition-colors text-sm"
+                    className="mt-5 w-full bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-medium py-2.5 rounded-xl transition-colors text-sm"
                   >
                     {checkingAnswers ? 'Checking...' : 'Check Answers'}
                   </button>
                 )}
 
-                {Object.keys(feedback).length === result.practice_exercises.length &&
-                  Object.values(feedback).every(f => f.status === 'correct') && (
+                {allCorrect && (
                   <p className="mt-4 text-center text-sm text-emerald-600 font-medium">
                     🎉 All correct! Great work!
                   </p>
                 )}
               </div>
-            ) : null}
+            )}
           </div>
         )}
       </main>
