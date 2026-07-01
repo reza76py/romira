@@ -84,11 +84,13 @@ CRITICAL: Return ONLY a valid JSON object. No markdown, no backticks, no explana
 {{
   "english_translation": "natural English translation of what the student wrote",
   "book_sentences": {json.dumps(book_sentences_with_location, ensure_ascii=False)},
-  "grammar_point": "یک یا دو جمله کوتاه فارسی درباره نکته گرامری. فقط فارسی. هیچ کلمه انگلیسی نباشد. هر جمله در یک خط جداگانه.",
+  "grammar_point": "Analyze the English translation. Format exactly like this — 3 lines only, nothing else:\n[one short Persian sentence about sentence type and count, no prefix]\nPurpose: [Statement/Question/Command/Exclamation] | Voice: [Active/Passive] | Structure: [Simple/Compound/Complex/Compound-Complex]\n[one short Persian sentence of additional insight, no prefix]",
+  "sentence_parts": {{"subject": ["word or phrase"], "verb": ["word or phrase"], "object": ["word or phrase or empty list"], "other": ["any other notable parts or empty list"]}},
   "practice_exercises": ["She ___ (want) to go. | wants", "sentence 2 with blank | answer", "sentence 3 with blank | answer"]
 }}
 
-Each practice exercise MUST follow this exact format: fill-in-the-blank sentence with ___ for the missing word, then a space, then a pipe character |, then a space, then the correct answer. Example: "She ___ (want) to go out. | wants". No other format is acceptable."""
+Each practice exercise MUST follow this exact format: fill-in-the-blank sentence with ___ for the missing word, then a space, then a pipe character |, then a space, then the correct answer. Example: "She ___ (want) to go out. | wants". No other format is acceptable.
+For sentence_parts: identify the grammatical roles in the english_translation sentence. Each value is a list of strings (words or phrases). Use empty list [] if a role doesn't exist."""
 
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",

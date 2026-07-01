@@ -8,7 +8,7 @@ echo "=== Pulling latest code ==="
 git fetch origin main && git reset --hard origin/main
 
 echo "=== Building Docker images ==="
-docker compose build --no-cache
+docker compose build
 
 echo "=== Stopping old containers ==="
 docker stop romira-frontend romira-backend romira-db 2>/dev/null || true
@@ -31,4 +31,5 @@ print('Tables created.')
 echo "=== Seeding data ==="
 docker compose exec -T romira-backend python seed.py
 
+docker image prune -f
 echo "=== Deployment complete! ==="

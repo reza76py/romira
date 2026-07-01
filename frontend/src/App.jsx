@@ -86,10 +86,22 @@ function StudentView({ student, onExit }) {
   const [sessionId, setSessionId] = useState(null)
   const [sessionStart, setSessionStart] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
+  const [grammarLineIndex, setGrammarLineIndex] = useState(0)
 
   useEffect(() => {
     logEvent('login')
   }, [])
+
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.key === 'Enter' && result && grammarLineIndex < result.grammar_point.split('\n').filter(l => l.trim()).length) {
+        e.preventDefault()
+        setGrammarLineIndex(prev => prev + 1)
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [result, grammarLineIndex])
 
   async function handleSend() {
     if (!input.trim() || loading) return
@@ -113,6 +125,7 @@ function StudentView({ student, onExit }) {
       setSessionId(data.id)
       setSessionStart(Date.now())
       setRetryCount(0)
+      setGrammarLineIndex(0)
       setPracticeAnswers({})
       setShowCorrections(false)
       setFeedback({})
@@ -281,9 +294,38 @@ function StudentView({ student, onExit }) {
             ) : revealed.grammar ? (
               <div className="bg-white rounded-2xl border border-slate-200 px-5 py-4 fade-in">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Grammar Point</p>
-                <p className="text-slate-700 text-sm leading-relaxed" dir="rtl" style={PERSIAN_FONT}>
-                  {result.grammar_point}
-                </p>
+                {result.sentence_parts && (
+                  <div className="mb-4 p-3 bg-slate-50 rounded-xl text-sm font-medium leading-loose">
+                    {result.english_translation.split(' ').map((word, i) => {
+                      const clean = word.replace(/[.,!?;:'"]/g, '').toLowerCase()
+                      const isSubject = result.sentence_parts.subject?.some(s => s.toLowerCase().includes(clean))
+                      const isVerb = result.sentence_parts.verb?.some(v => v.toLowerCase().includes(clean))
+                      const isObject = result.sentence_parts.object?.some(o => o.toLowerCase().includes(clean))
+                      const color = isSubject ? 'text-blue-600 font-semibold' : isVerb ? 'text-red-500 font-semibold' : isObject ? 'text-green-600 font-semibold' : 'text-slate-700'
+                      return <span key={i} className={color}>{word} </span>
+                    })}
+                    <div className="mt-2 flex gap-4 text-xs text-slate-500">
+                      <span className="text-blue-600">■ Subject</span>
+                      <span className="text-red-500">■ Verb</span>
+                      <span className="text-green-600">■ Object</span>
+                    </div>
+                  </div>
+                )}
+                <div className="text-slate-700 text-sm leading-relaxed space-y-2">
+                  {result.grammar_point.split('\n').filter(l => l.trim()).slice(0, grammarLineIndex).map((line, i) => (
+                    <p key={i} style={line.match(/[؀-ۿ]/) ? {...PERSIAN_FONT, direction: 'rtl'} : {direction: 'ltr'}}>
+                      {line}
+                    </p>
+                  ))}
+                </div>
+                {grammarLineIndex < result.grammar_point.split('\n').filter(l => l.trim()).length && (
+                  <button
+                    onClick={() => setGrammarLineIndex(prev => prev + 1)}
+                    className="mt-3 text-xs text-teal-500 hover:text-teal-700 font-medium"
+                  >
+                    Press Enter or tap to reveal next ↓
+                  </button>
+                )}
               </div>
             ) : null}
 
