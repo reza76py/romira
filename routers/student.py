@@ -56,7 +56,6 @@ def ask(body: schemas.StudentInteractionCreate, db: Session = Depends(get_db)):
         chapter_name = meta.get("chapter_name", "")
         paragraph = meta.get("paragraph", "")
         physical_page = max(1, meta.get("page", 6) - 6)
-        line = meta.get("line_on_page", "")
         if chapter_name and paragraph:
             location = f"(Ch: {chapter_name}, p.{physical_page})"
         else:
@@ -84,7 +83,7 @@ CRITICAL: Return ONLY a valid JSON object. No markdown, no backticks, no explana
 {{
   "english_translation": "natural English translation of what the student wrote",
   "book_sentences": {json.dumps(book_sentences_with_location, ensure_ascii=False)},
-  "grammar_point": "Analyze the English translation. Format exactly like this — 3 lines only, nothing else:\n[one short Persian sentence about sentence type and count, no prefix]\nPurpose: [Statement/Question/Command/Exclamation] | Voice: [Active/Passive] | Structure: [Simple/Compound/Complex/Compound-Complex]\n[one short Persian sentence of additional insight, no prefix]",
+  "grammar_point": "Analyze the English translation. Write in Persian only. Format exactly like this — 2 lines only, nothing else:\n[one short Persian sentence about sentence type, count, and structure — no English labels]\n[one short Persian sentence of additional insight for the student]",
   "sentence_parts": {{"subject": ["word or phrase"], "verb": ["word or phrase"], "object": ["word or phrase or empty list"], "other": ["any other notable parts or empty list"]}},
   "practice_exercises": ["She ___ (want) to go. | wants", "sentence 2 with blank | answer", "sentence 3 with blank | answer"]
 }}
