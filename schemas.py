@@ -90,6 +90,22 @@ class TranslateSentenceRequest(BaseModel):
     sentence: str
 
 
+class VocabSaveRequest(BaseModel):
+    student_id: int
+    word: str
+    translation: str
+
+
+class VocabResponse(BaseModel):
+    id: int
+    word: str
+    translation: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class StudentInteractionResponse(BaseModel):
     id: int
     student_id: int

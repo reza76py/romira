@@ -89,14 +89,27 @@ function StudentView({ student, onExit }) {
   const [retryFeedback, setRetryFeedback] = useState(null)
   const [allCorrect, setAllCorrect] = useState(false)
   const [bookTranslations, setBookTranslations] = useState({})
+  const [hints, setHints] = useState({})
+  const [wordPopup, setWordPopup] = useState(null)
+  const [wordMeaning, setWordMeaning] = useState(null)
+  const [wordSaved, setWordSaved] = useState(false)
+  const [showVocab, setShowVocab] = useState(false)
+  const [vocabList, setVocabList] = useState({})
+  const [expandedBox, setExpandedBox] = useState(null)
+  const [flippedCards, setFlippedCards] = useState({})
+  const [reviewedCards, setReviewedCards] = useState({})
   const [checkingAnswers, setCheckingAnswers] = useState(false)
   const [sessionId, setSessionId] = useState(null)
   const [sessionStart, setSessionStart] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
   const [grammarLineIndex, setGrammarLineIndex] = useState(0)
+  const [progress, setProgress] = useState(null)
 
   useEffect(() => {
     logEvent('login')
+    fetch(`/api/student/${student.id}/progress`)
+      .then(r => r.json())
+      .then(p => setProgress(p))
   }, [])
 
   useEffect(() => {
@@ -143,6 +156,7 @@ function StudentView({ student, onExit }) {
       setRetryFeedback(null)
       setAllCorrect(false)
       setBookTranslations({})
+      setHints({})
       setCheckingAnswers(false)
       setInput('')
     } catch (e) {
@@ -154,6 +168,44 @@ function StudentView({ student, onExit }) {
 
   function reveal(key) {
     setRevealed((r) => ({ ...r, [key]: true }))
+  }
+
+  function speak(text) {
+    window.speechSynthesis.cancel()
+    const utter = new SpeechSynthesisUtterance(text)
+    utter.lang = 'en-GB'
+    utter.rate = 0.85
+    window.speechSynthesis.speak(utter)
+  }
+
+  function handleWordClick(word, e) {
+    const clean = word.replace(/[.,!?;:'"()]/g, '').trim()
+    if (!clean) return
+    setWordPopup({word: clean})
+    setWordMeaning(null)
+    setWordSaved(false)
+    fetch('/api/student/vocabulary/meaning', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({word: clean})
+    }).then(r => r.json()).then(d => setWordMeaning(d.translation))
+  }
+
+  function handleSaveWord() {
+    fetch('/api/student/vocabulary/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({student_id: student.id, word: wordPopup.word, translation: wordMeaning})
+    }).then(r => r.json()).then(() => {
+      setWordSaved(true)
+      loadVocab()
+    })
+  }
+
+  function loadVocab() {
+    fetch(`/api/student/${student.id}/vocabulary`)
+      .then(r => r.json())
+      .then(d => setVocabList(d))
   }
 
   async function handleCheckAnswers() {
@@ -239,6 +291,89 @@ function StudentView({ student, onExit }) {
     } catch { /* silent fail */ }
   }
 
+  if (showVocab) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <div className="sticky top-0 z-10 bg-white border-b border-slate-200 px-5 py-4 flex items-center justify-between">
+          <h2 className="text-lg font-bold text-slate-800">📚 My Words</h2>
+          <button onClick={() => setShowVocab(false)} className="text-sm text-slate-500 hover:text-slate-700 font-medium">← Back</button>
+        </div>
+        <div className="max-w-lg mx-auto p-5 space-y-4">
+          {[1,2,3,4,5].map(boxNum => {
+            const boxData = vocabList[`box_${boxNum}`]
+            if (!boxData || boxData.total === 0) return null
+            const boxColors = {
+              1: {bg: '#fef2f2', border: '#fca5a5', title: '#dc2626', badge: '#fee2e2'},
+              2: {bg: '#fff7ed', border: '#fdba74', title: '#ea580c', badge: '#ffedd5'},
+              3: {bg: '#fefce8', border: '#fde047', title: '#ca8a04', badge: '#fef9c3'},
+              4: {bg: '#f0fdf4', border: '#86efac', title: '#16a34a', badge: '#dcfce7'},
+              5: {bg: '#eff6ff', border: '#93c5fd', title: '#2563eb', badge: '#dbeafe'},
+            }
+            const c = boxColors[boxNum]
+            const intervals = {1:'daily',2:'every 2 days',3:'every 4 days',4:'every 7 days',5:'every 14 days'}
+            const isExpanded = expandedBox === boxNum
+            return (
+              <div key={boxNum} className="rounded-2xl overflow-hidden" style={{border: `1.5px solid ${c.border}`, background: c.bg}}>
+                <div className="px-5 py-4 flex items-center justify-between cursor-pointer" onClick={() => setExpandedBox(isExpanded ? null : boxNum)}>
+                  <div className="flex items-center gap-3">
+                    <span className="text-lg font-black" style={{color: c.title}}>Box {boxNum}</span>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{background: c.badge, color: c.title}}>{intervals[boxNum]}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {boxData.due > 0 && <span className="text-xs font-bold px-2 py-1 rounded-full bg-white" style={{color: c.title}}>{boxData.due} due</span>}
+                    <span className="text-xs text-slate-400">{boxData.total} words</span>
+                    <span className="text-slate-400">{isExpanded ? '▲' : '▼'}</span>
+                  </div>
+                </div>
+                {isExpanded && (
+                  <div className="px-5 pb-4 space-y-3">
+                    {boxData.words.map(w => {
+                      const isFlipped = flippedCards[w.id]
+                      const isDone = reviewedCards[w.id]
+                      return (
+                        <div key={w.id} className={`rounded-xl border bg-white p-4 transition-all ${isDone ? 'opacity-50' : ''}`} style={{borderColor: c.border}}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <p className="font-bold text-slate-800">{w.word}</p>
+                              {w.due && !isDone && <span className="text-xs font-bold px-1.5 py-0.5 rounded" style={{background: c.badge, color: c.title}}>due</span>}
+                            </div>
+                            <button onClick={() => setFlippedCards(f => ({...f, [w.id]: !f[w.id]}))} className="text-xs text-slate-400 hover:text-slate-600 border border-slate-200 px-2 py-1 rounded-lg">
+                              {isFlipped ? 'hide' : 'show meaning'}
+                            </button>
+                          </div>
+                          {isFlipped && (
+                            <p className="mt-2 text-base font-semibold" style={{...PERSIAN_FONT, direction: 'rtl', color: c.title}}>{w.translation}</p>
+                          )}
+                          {isFlipped && !isDone && w.due && (
+                            <div className="mt-3 flex gap-2">
+                              <button
+                                onClick={() => fetch(`/api/student/vocabulary/${w.id}/correct`, {method:'POST'}).then(() => { setReviewedCards(r => ({...r, [w.id]: 'correct'})); loadVocab() })}
+                                className="flex-1 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white text-xs font-bold"
+                              >✓ I knew it → Box {Math.min(w.box+1,5)}</button>
+                              <button
+                                onClick={() => fetch(`/api/student/vocabulary/${w.id}/forgot`, {method:'POST'}).then(() => { setReviewedCards(r => ({...r, [w.id]: 'forgot'})); loadVocab() })}
+                                className="flex-1 py-2 rounded-xl bg-red-400 hover:bg-red-500 text-white text-xs font-bold"
+                              >✗ Forgot → Box 1</button>
+                            </div>
+                          )}
+                          {isDone && <p className="mt-2 text-xs font-semibold" style={{color: c.title}}>{reviewedCards[w.id] === 'correct' ? '✓ Moved up!' : '✗ Back to Box 1'}</p>}
+                          <button onClick={() => fetch(`/api/student/vocabulary/${w.id}`, {method:'DELETE'}).then(() => loadVocab())} className="mt-2 text-xs text-red-300 hover:text-red-500">🗑 remove</button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          {Object.values(vocabList).every(b => b.total === 0) && (
+            <p className="text-slate-400 text-center py-10">No saved words yet. Click any word in the translation to save it.</p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   const exercises = result
     ? result.practice_exercises.map(ex => {
         const [sentence, answer] = ex.split(' | ')
@@ -258,6 +393,9 @@ function StudentView({ student, onExit }) {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-teal-100 font-medium">Hello, {student.name} 👋</span>
+          <button onClick={() => { setShowVocab(true); loadVocab(); setExpandedBox(null); setFlippedCards({}); setReviewedCards({}) }} className="text-sm font-semibold text-white bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1.5 rounded-lg mr-2">
+            📚 My Words
+          </button>
           <button
             onClick={async () => { logEvent('exit', { interaction_id: sessionId }); await closeSession(false); onExit() }}
             className="text-xs text-teal-200 hover:text-white border border-teal-500 hover:border-teal-300 px-3 py-1.5 rounded-lg transition-colors"
@@ -282,12 +420,41 @@ function StudentView({ student, onExit }) {
           </div>
         )}
 
+        {progress && !result && (
+          <div className="rounded-2xl px-5 py-4 fade-in" style={{background: 'linear-gradient(135deg, #fef9c3, #fef3c7)', border: '1.5px solid #fcd34d'}}>
+            <p className="text-xs font-bold text-amber-600 uppercase tracking-widest mb-2">✦ Your Progress</p>
+            <div className="flex gap-6 text-sm">
+              <div className="text-center">
+                <p className="text-2xl font-bold text-amber-700">{progress.total_sessions}</p>
+                <p className="text-xs text-amber-600">Sessions</p>
+              </div>
+              <div className="text-center">
+                <p className="text-2xl font-bold text-amber-700">{progress.streak}🔥</p>
+                <p className="text-xs text-amber-600">Day streak</p>
+              </div>
+              {progress.last_session && (
+                <div className="text-center">
+                  <p className="text-sm font-bold text-amber-700">{progress.last_session}</p>
+                  <p className="text-xs text-amber-600">Last session</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {result && (
           <div className="space-y-4">
             {/* Translation */}
             <div className="bg-gradient-to-r from-emerald-50 to-sky-50 rounded-2xl border-l-4 border-teal-500 px-5 py-5 fade-in shadow-sm">
               <p className="text-xs font-semibold text-teal-600 uppercase tracking-wider mb-2">Translation</p>
-              <p className="text-slate-800 text-lg leading-relaxed font-medium">{result.english_translation}</p>
+              <div className="flex items-start gap-3">
+                <p className="text-slate-800 text-lg font-medium leading-relaxed flex-1">
+                  {result.english_translation.split(' ').map((word, i) => (
+                    <span key={i} onClick={(e) => handleWordClick(word, e)} className="cursor-pointer hover:bg-yellow-100 hover:text-yellow-800 rounded px-0.5 transition-all">{word} </span>
+                  ))}
+                </p>
+                <button onClick={() => speak(result.english_translation)} className="text-teal-500 hover:text-teal-700 text-xl mt-1" title="Listen">🔊</button>
+              </div>
             </div>
 
             {/* Grammar */}
@@ -349,7 +516,10 @@ function StudentView({ student, onExit }) {
                 <p className="text-xs font-semibold text-teal-600 uppercase tracking-wider mb-2">From the Book</p>
                 {result.book_sentences.map((s, i) => (
                   <div key={i} className="border-l-4 border-teal-400 pl-4 py-1">
-                    <p className="text-slate-800 text-sm font-medium leading-relaxed">{s.text || s}</p>
+                    <div className="flex items-start gap-2">
+                      <p className="text-slate-800 text-sm font-medium leading-relaxed flex-1">{s.text || s}</p>
+                      <button onClick={() => speak(s.text || s)} className="text-teal-400 hover:text-teal-600 text-base mt-0.5" title="Listen">🔊</button>
+                    </div>
                     {s.location && <p className="text-xs text-teal-500 mt-1 font-semibold">{s.location}</p>}
                     <button
                       onClick={() => {
@@ -407,6 +577,15 @@ function StudentView({ student, onExit }) {
                           placeholder="Your answer..."
                           className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-slate-50"
                         />
+                        {feedback[i] === undefined && !hints[i] && (
+                          <button
+                            onClick={() => setHints(h => ({...h, [i]: ex.answer[0] + '...'}))}
+                            className="mt-1 text-xs text-amber-500 hover:text-amber-700 font-medium"
+                          >
+                            💡 Hint
+                          </button>
+                        )}
+                        {hints[i] && <p className="mt-1 text-xs text-amber-600 font-semibold">💡 Starts with: <span className="font-bold">{hints[i]}</span></p>}
 
                         {checked && (
                           <div className="ml-4 space-y-2">
@@ -553,6 +732,29 @@ function StudentView({ student, onExit }) {
           </button>
         </div>
       </div>
+
+      {wordPopup && (
+        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50" onClick={() => setWordPopup(null)}>
+          <div className="bg-white rounded-2xl p-6 shadow-2xl max-w-sm w-full mx-4" onClick={e => e.stopPropagation()}>
+            <p className="text-xl font-bold text-slate-800 mb-1">{wordPopup.word}</p>
+            {wordMeaning ? (
+              <>
+                <p className="text-lg text-teal-700 font-semibold mb-4" style={{...PERSIAN_FONT, direction: 'rtl'}}>{wordMeaning}</p>
+                {!wordSaved ? (
+                  <button onClick={handleSaveWord} className="w-full py-2 rounded-xl bg-teal-500 hover:bg-teal-600 text-white font-bold text-sm">
+                    💾 Save to My Words
+                  </button>
+                ) : (
+                  <p className="text-center text-green-600 font-bold">✓ Saved!</p>
+                )}
+              </>
+            ) : (
+              <p className="text-slate-400 text-sm">Loading...</p>
+            )}
+            <button onClick={() => setWordPopup(null)} className="mt-3 w-full py-2 rounded-xl border border-slate-200 text-slate-500 text-sm hover:bg-slate-50">Close</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -283,6 +283,39 @@ def get_interactions(student_id: int, db: Session = Depends(get_db)):
     return interactions
 
 
+@router.get("/{student_id}/progress")
+def get_student_progress(student_id: int, db: Session = Depends(get_db)):
+    from datetime import datetime, timedelta, timezone
+    student = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    interactions = db.query(models.StudentInteraction)\
+        .filter(models.StudentInteraction.student_id == student_id)\
+        .order_by(models.StudentInteraction.created_at.desc()).all()
+
+    total_sessions = len(interactions)
+    last_session = interactions[0].created_at.strftime("%B %d") if interactions else None
+
+    streak = 0
+    if interactions:
+        today = datetime.now(timezone.utc).date()
+        dates = sorted(set(i.created_at.date() for i in interactions), reverse=True)
+        check = today
+        for d in dates:
+            if d == check or d == check - timedelta(days=1):
+                streak += 1
+                check = d
+            else:
+                break
+
+    return {
+        "total_sessions": total_sessions,
+        "last_session": last_session,
+        "streak": streak
+    }
+
+
 @router.post("/translate-sentence")
 def translate_sentence(body: schemas.TranslateSentenceRequest):
     response = client.messages.create(
@@ -298,3 +331,93 @@ def translate_sentence(body: schemas.TranslateSentenceRequest):
         }]
     )
     return {"translation": response.content[0].text.strip()}
+
+
+def next_review_date(box: int):
+    from datetime import datetime, timedelta
+    intervals = {1: 1, 2: 2, 3: 4, 4: 7, 5: 14}
+    return datetime.utcnow() + timedelta(days=intervals.get(box, 1))
+
+
+@router.post("/vocabulary/meaning")
+def get_word_meaning(body: dict):
+    word = body.get("word", "").strip()
+    if not word:
+        raise HTTPException(status_code=400, detail="No word provided")
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=100,
+        messages=[{"role": "user", "content": f"Translate this English word to Persian in one short phrase. Return ONLY the Persian translation, nothing else: {word}"}]
+    )
+    return {"translation": response.content[0].text.strip()}
+
+
+@router.post("/vocabulary/save")
+def save_vocabulary(body: schemas.VocabSaveRequest, db: Session = Depends(get_db)):
+    existing = db.query(models.StudentVocabulary).filter(
+        models.StudentVocabulary.student_id == body.student_id,
+        models.StudentVocabulary.word == body.word.lower()
+    ).first()
+    if existing:
+        return {"id": existing.id, "word": existing.word, "translation": existing.translation, "created_at": existing.created_at}
+    vocab = models.StudentVocabulary(
+        student_id=body.student_id,
+        word=body.word.lower(),
+        translation=body.translation
+    )
+    db.add(vocab)
+    db.commit()
+    db.refresh(vocab)
+    return vocab
+
+
+@router.get("/{student_id}/vocabulary")
+def get_vocabulary(student_id: int, db: Session = Depends(get_db)):
+    from datetime import datetime
+    all_words = db.query(models.StudentVocabulary)\
+        .filter(models.StudentVocabulary.student_id == student_id)\
+        .order_by(models.StudentVocabulary.box, models.StudentVocabulary.next_review).all()
+
+    now = datetime.utcnow()
+    vocab_result = {}
+    for box_num in range(1, 6):
+        words_in_box = [w for w in all_words if w.box == box_num]
+        due = [w for w in words_in_box if w.next_review <= now]
+        vocab_result[f"box_{box_num}"] = {
+            "total": len(words_in_box),
+            "due": len(due),
+            "words": [{"id": w.id, "word": w.word, "translation": w.translation, "box": w.box, "due": w.next_review <= now} for w in words_in_box]
+        }
+    return vocab_result
+
+
+@router.delete("/vocabulary/{vocab_id}")
+def delete_vocabulary(vocab_id: int, db: Session = Depends(get_db)):
+    vocab = db.query(models.StudentVocabulary).filter(models.StudentVocabulary.id == vocab_id).first()
+    if not vocab:
+        raise HTTPException(status_code=404, detail="Not found")
+    db.delete(vocab)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/vocabulary/{vocab_id}/correct")
+def vocab_correct(vocab_id: int, db: Session = Depends(get_db)):
+    vocab = db.query(models.StudentVocabulary).filter(models.StudentVocabulary.id == vocab_id).first()
+    if not vocab:
+        raise HTTPException(status_code=404, detail="Not found")
+    vocab.box = min(vocab.box + 1, 5)
+    vocab.next_review = next_review_date(vocab.box)
+    db.commit()
+    return {"box": vocab.box, "next_review": vocab.next_review}
+
+
+@router.post("/vocabulary/{vocab_id}/forgot")
+def vocab_forgot(vocab_id: int, db: Session = Depends(get_db)):
+    vocab = db.query(models.StudentVocabulary).filter(models.StudentVocabulary.id == vocab_id).first()
+    if not vocab:
+        raise HTTPException(status_code=404, detail="Not found")
+    vocab.box = 1
+    vocab.next_review = next_review_date(1)
+    db.commit()
+    return {"box": vocab.box, "next_review": vocab.next_review}

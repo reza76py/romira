@@ -47,3 +47,14 @@ class StudentEvent(Base):
     event_metadata = Column("metadata", Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     student = relationship("Student")
+
+class StudentVocabulary(Base):
+    __tablename__ = "student_vocabulary"
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"))
+    word = Column(String(100))
+    translation = Column(String(255))
+    box = Column(Integer, default=1)
+    next_review = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    student = relationship("Student")
