@@ -86,6 +86,10 @@ class StudentRetryCreate(BaseModel):
     grammar_point: str
 
 
+class TranslateSentenceRequest(BaseModel):
+    sentence: str
+
+
 class StudentInteractionResponse(BaseModel):
     id: int
     student_id: int

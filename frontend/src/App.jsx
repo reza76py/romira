@@ -88,6 +88,7 @@ function StudentView({ student, onExit }) {
   const [retryAnswer, setRetryAnswer] = useState('')
   const [retryFeedback, setRetryFeedback] = useState(null)
   const [allCorrect, setAllCorrect] = useState(false)
+  const [bookTranslations, setBookTranslations] = useState({})
   const [checkingAnswers, setCheckingAnswers] = useState(false)
   const [sessionId, setSessionId] = useState(null)
   const [sessionStart, setSessionStart] = useState(null)
@@ -141,6 +142,7 @@ function StudentView({ student, onExit }) {
       setRetryAnswer('')
       setRetryFeedback(null)
       setAllCorrect(false)
+      setBookTranslations({})
       setCheckingAnswers(false)
       setInput('')
     } catch (e) {
@@ -346,10 +348,30 @@ function StudentView({ student, onExit }) {
               <div className="bg-white rounded-2xl border-l-4 border-teal-400 px-5 py-4 space-y-2 fade-in shadow-sm">
                 <p className="text-xs font-semibold text-teal-600 uppercase tracking-wider mb-2">From the Book</p>
                 {result.book_sentences.map((s, i) => (
-                  <div key={i} className="border-l-2 border-teal-200 pl-3">
-                    <p className="text-slate-700 text-sm leading-relaxed">{s.text || s}</p>
-                    {s.location && (
-                      <p className="text-xs text-slate-400 mt-0.5">{s.location}</p>
+                  <div key={i} className="border-l-4 border-teal-400 pl-4 py-1">
+                    <p className="text-slate-800 text-sm font-medium leading-relaxed">{s.text || s}</p>
+                    {s.location && <p className="text-xs text-teal-500 mt-1 font-semibold">{s.location}</p>}
+                    <button
+                      onClick={() => {
+                        if (bookTranslations[i]) {
+                          setBookTranslations(t => {const n = {...t}; delete n[i]; return n})
+                        } else {
+                          setBookTranslations(t => ({...t, [`loading_${i}`]: true}))
+                          fetch('/api/student/translate-sentence', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({sentence: s.text || s})
+                          }).then(r => r.json()).then(data => setBookTranslations(t => ({...t, [i]: data.translation, [`loading_${i}`]: false})))
+                        }
+                      }}
+                      className="mt-2 text-xs font-bold text-teal-600 hover:text-teal-800 bg-teal-50 hover:bg-teal-100 px-3 py-1 rounded-full border border-teal-200 transition-all"
+                    >
+                      {bookTranslations[`loading_${i}`] ? '...' : bookTranslations[i] ? '▲ بستن' : 'ترجمه ▼'}
+                    </button>
+                    {bookTranslations[i] && (
+                      <p className="mt-2 text-sm text-teal-800 bg-teal-50 rounded-lg px-3 py-2" style={{...PERSIAN_FONT, direction: 'rtl'}}>
+                        {bookTranslations[i]}
+                      </p>
                     )}
                   </div>
                 ))}

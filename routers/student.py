@@ -281,3 +281,20 @@ def get_interactions(student_id: int, db: Session = Depends(get_db)):
         ix.book_sentences = bs
 
     return interactions
+
+
+@router.post("/translate-sentence")
+def translate_sentence(body: schemas.TranslateSentenceRequest):
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=200,
+        messages=[{
+            "role": "user",
+            "content": (
+                "Translate this English sentence to Persian (Farsi). "
+                "Return ONLY the Persian translation, nothing else:\n\n"
+                f"{body.sentence}"
+            )
+        }]
+    )
+    return {"translation": response.content[0].text.strip()}
