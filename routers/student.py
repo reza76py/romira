@@ -54,8 +54,17 @@ def ask(body: schemas.StudentInteractionCreate, db: Session = Depends(get_db)):
                 model="claude-haiku-4-5-20251001",
                 max_tokens=600,
                 messages=[{"role": "user", "content": f"""Correct each of these English sentences written by a Persian ESL student.
-Return ONLY a JSON array where each item has "original" and "corrected" keys.
-If a sentence is already correct, "corrected" should be identical to "original".
+Return ONLY a JSON array where each item has:
+- "original": the original sentence as written
+- "corrected": the corrected sentence
+- "wrong_words": array of specific words or phrases from the ORIGINAL sentence that were incorrect (empty array if sentence is correct)
+
+Example:
+[
+  {{"original": "I goed to the store", "corrected": "I went to the store", "wrong_words": ["goed"]}},
+  {{"original": "She is nice", "corrected": "She is nice", "wrong_words": []}}
+]
+
 Sentences: {json.dumps(raw_sentences, ensure_ascii=False)}
 Return ONLY the JSON array, no other text."""}]
             )
@@ -439,3 +448,73 @@ def vocab_forgot(vocab_id: int, db: Session = Depends(get_db)):
     vocab.next_review = next_review_date(1)
     db.commit()
     return {"box": vocab.box, "next_review": vocab.next_review}
+
+
+@router.post("/analyze/deep-dive")
+def analyze_deep_dive(body: dict, db: Session = Depends(get_db)):
+    sentence = body.get("text", "").strip()
+    if not sentence:
+        raise HTTPException(status_code=400, detail="No text provided")
+
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=800,
+        messages=[{"role": "user", "content": f"""Analyze this English text for a Persian ESL student.
+Return ONLY a JSON array. Each item has:
+- "persian": one short Persian sentence explaining the point
+- "highlight": array of English words or phrases from the text that this point discusses
+
+Cover: tense/aspect, conjunctions, reported speech (if any), articles, prepositions.
+
+Example format:
+[
+  {{"persian": "از Past Continuous استفاده شده است.", "highlight": ["was walking", "was reading"]}},
+  {{"persian": "کلمه 'when' دو جمله را به هم وصل می‌کند.", "highlight": ["when"]}}
+]
+
+Text: {sentence}
+Return ONLY the JSON array, no other text."""}]
+    )
+    raw = response.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    try:
+        points = json.loads(raw)
+    except Exception:
+        points = [{"persian": response.content[0].text.strip(), "highlight": []}]
+    return {"points": points}
+
+
+@router.post("/analyze/writing")
+def analyze_writing(body: dict, db: Session = Depends(get_db)):
+    sentence = body.get("text", "").strip()
+    if not sentence:
+        raise HTTPException(status_code=400, detail="No text provided")
+
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=800,
+        messages=[{"role": "user", "content": f"""Analyze this English text for a Persian ESL student.
+Return ONLY a JSON array. Each item has:
+- "persian": one short Persian sentence explaining the point
+- "highlight": array of English words or phrases from the text that this point discusses
+
+Cover: cohesion, transition words, clarity, register, one improvement suggestion.
+
+Example format:
+[
+  {{"persian": "جملات به خوبی به هم متصل هستند.", "highlight": ["Every morning", "Yesterday", "By the time"]}},
+  {{"persian": "کلمه 'but' تضاد را نشان می‌دهد.", "highlight": ["but"]}}
+]
+
+Text: {sentence}
+Return ONLY the JSON array, no other text."""}]
+    )
+    raw = response.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    try:
+        points = json.loads(raw)
+    except Exception:
+        points = [{"persian": response.content[0].text.strip(), "highlight": []}]
+    return {"points": points}

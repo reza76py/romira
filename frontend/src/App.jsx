@@ -105,6 +105,9 @@ function StudentView({ student, onExit }) {
   const [retryCount, setRetryCount] = useState(0)
   const [grammarLineIndex, setGrammarLineIndex] = useState(0)
   const [progress, setProgress] = useState(null)
+  const [deepDive, setDeepDive] = useState(null)
+  const [deepDiveLoading, setDeepDiveLoading] = useState(false)
+  const [deepDiveLines, setDeepDiveLines] = useState(0)
 
   useEffect(() => {
     logEvent('login')
@@ -158,6 +161,9 @@ function StudentView({ student, onExit }) {
       setAllCorrect(false)
       setBookTranslations({})
       setHints({})
+      setDeepDive(null)
+      setDeepDiveLoading(false)
+      setDeepDiveLines(0)
       setCheckingAnswers(false)
       setInput('')
       setInputDir('rtl')
@@ -208,6 +214,19 @@ function StudentView({ student, onExit }) {
     fetch(`/api/student/${student.id}/vocabulary`)
       .then(r => r.json())
       .then(d => setVocabList(d))
+  }
+
+  async function handleDeepDive() {
+    setDeepDiveLoading(true)
+    const res = await fetch('/api/student/analyze/deep-dive', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: result.english_translation})
+    })
+    const data = await res.json()
+    setDeepDive(data.points)
+    setDeepDiveLines(0)
+    setDeepDiveLoading(false)
   }
 
   async function handleCheckAnswers() {
@@ -456,7 +475,19 @@ function StudentView({ student, onExit }) {
                       <div key={i} className="bg-white rounded-xl p-3 border border-green-100">
                         {c.original !== c.corrected ? (
                           <>
-                            <p className="text-sm text-red-400 line-through mb-1">{c.original}</p>
+                            <p className="text-sm mb-1">
+                              {c.original.split(' ').map((word, wi) => {
+                                const cleanWord = word.replace(/[.,!?;:'"]/g, '').toLowerCase()
+                                const isWrong = c.wrong_words && c.wrong_words.some(w =>
+                                  w.toLowerCase().replace(/[.,!?;:'"]/g, '') === cleanWord
+                                )
+                                return (
+                                  <span key={wi} className={isWrong ? 'text-red-500 font-bold bg-red-50 rounded px-0.5' : 'text-blue-600'}>
+                                    {word}{' '}
+                                  </span>
+                                )
+                              })}
+                            </p>
                             <p className="text-sm font-semibold text-green-700">✓ {c.corrected}</p>
                           </>
                         ) : (
@@ -542,6 +573,46 @@ function StudentView({ student, onExit }) {
                     className="mt-3 text-xs text-purple-500 hover:text-purple-700 font-medium"
                   >
                     Press Enter or tap to reveal next ↓
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Level 2 — Deep Dive */}
+            {!deepDive && !deepDiveLoading ? (
+              <button
+                onClick={handleDeepDive}
+                className="w-full rounded-2xl px-5 py-4 text-left font-semibold text-indigo-700 bg-indigo-50 border-2 border-dashed border-indigo-200 hover:bg-indigo-100 transition-all fade-in"
+              >
+                🔍 Deep Dive — tenses, conjunctions, reported speech
+              </button>
+            ) : deepDiveLoading ? (
+              <div className="rounded-2xl px-6 py-5 fade-in" style={{background: '#eef2ff', border: '1.5px solid #a5b4fc'}}>
+                <p className="text-indigo-400 text-sm animate-pulse">Analyzing...</p>
+              </div>
+            ) : (
+              <div className="rounded-2xl px-6 py-5 fade-in" style={{background: '#eef2ff', border: '1.5px solid #a5b4fc'}}>
+                <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest mb-3">🔍 Deep Dive</p>
+                <div className="mb-4 p-4 bg-white rounded-xl border border-indigo-100 text-base font-medium leading-loose">
+                  {result.english_translation.split(' ').map((word, i) => {
+                    const clean = word.replace(/[.,!?;:'"]/g, '').toLowerCase()
+                    const currentHighlights = deepDiveLines > 0 && deepDive[deepDiveLines - 1]?.highlight
+                      ? deepDive[deepDiveLines - 1].highlight
+                      : []
+                    const isHighlighted = currentHighlights.some(h => h.toLowerCase().includes(clean) || clean.includes(h.toLowerCase().replace(/[.,!?;:'"]/g, '')))
+                    return <span key={i} className={isHighlighted ? 'bg-yellow-200 text-yellow-900 font-bold rounded px-0.5' : 'text-slate-700'}>{word} </span>
+                  })}
+                </div>
+                <div className="space-y-2">
+                  {Array.isArray(deepDive) && deepDive.slice(0, deepDiveLines).map((point, i) => (
+                    <p key={i} className="text-sm leading-relaxed" style={{...PERSIAN_FONT, direction: 'rtl', color: '#3730a3'}}>
+                      {point.persian}
+                    </p>
+                  ))}
+                </div>
+                {Array.isArray(deepDive) && deepDiveLines < deepDive.length && (
+                  <button onClick={() => setDeepDiveLines(prev => prev + 1)} className="mt-3 text-xs text-indigo-400 hover:text-indigo-600 font-medium animate-pulse">
+                    ↓ tap to reveal more
                   </button>
                 )}
               </div>
