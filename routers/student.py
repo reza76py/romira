@@ -23,49 +23,63 @@ def ask(body: schemas.StudentInteractionCreate, db: Session = Depends(get_db)):
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    errors = db.query(models.StudentError).filter(
-        models.StudentError.student_id == body.student_id
-    ).all()
-    error_list = [f"{e.wrong} → {e.correct}" for e in errors]
+    error_list = [{"wrong": e.wrong, "correct": e.correct} for e in student.errors]
 
-    # Step 1: Translate Persian → English so we can query ChromaDB meaningfully
-    translation_resp = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=200,
-        messages=[{
-            "role": "user",
-            "content": (
-                "Translate this Persian text to English. "
-                "Return ONLY the English translation, nothing else:\n\n"
-                f"{body.persian_input}"
+    # Detect language: Persian characters → Persian mode, else English correction mode
+    is_persian = bool(re.search(r'[؀-ۿ]', body.persian_input))
+
+    corrections_list = None
+
+    if is_persian:
+        translation_response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=200,
+            messages=[{"role": "user", "content": f"Translate this Persian text to natural English. Return ONLY the English translation, nothing else: {body.persian_input}"}]
+        )
+        english_for_search = translation_response.content[0].text.strip()
+        original_input_label = f"Student wrote in Persian: \"{body.persian_input}\"\nEnglish translation: \"{english_for_search}\""
+    else:
+        # Split on sentence-ending punctuation
+        raw_sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', body.persian_input.strip()) if s.strip()]
+        if len(raw_sentences) <= 1:
+            correction_response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=200,
+                messages=[{"role": "user", "content": f"Correct any grammar, spelling, or punctuation mistakes in this English sentence written by a Persian ESL student. Return ONLY the corrected sentence, nothing else. If already correct, return it unchanged: {body.persian_input}"}]
             )
-        }]
-    )
-    english_for_search = translation_resp.content[0].text.strip()
-
-    # Step 2: Find 2 relevant sentences from the book
-    query_embedding = embedding_model.encode(english_for_search).tolist()
-    results = collection.query(query_embeddings=[query_embedding], n_results=2)
-    book_sentences = results["documents"][0]
-    book_metadatas = results["metadatas"][0] if results.get("metadatas") else []
-
-    # Format sentences with location
-    book_sentences_with_location = []
-    for i, sentence in enumerate(book_sentences):
-        meta = book_metadatas[i] if i < len(book_metadatas) else {}
-        chapter_name = meta.get("chapter_name", "")
-        paragraph = meta.get("paragraph", "")
-        physical_page = max(1, meta.get("page", 6) - 6)
-        if chapter_name and paragraph:
-            location = f"(Ch: {chapter_name}, p.{physical_page})"
+            english_for_search = correction_response.content[0].text.strip()
+            original_input_label = f"Student wrote in English: \"{body.persian_input}\"\nCorrected version: \"{english_for_search}\""
         else:
-            location = ""
-        book_sentences_with_location.append({
-            "text": sentence,
-            "location": location
-        })
+            correction_response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=600,
+                messages=[{"role": "user", "content": f"""Correct each of these English sentences written by a Persian ESL student.
+Return ONLY a JSON array where each item has "original" and "corrected" keys.
+If a sentence is already correct, "corrected" should be identical to "original".
+Sentences: {json.dumps(raw_sentences, ensure_ascii=False)}
+Return ONLY the JSON array, no other text."""}]
+            )
+            raw_corrections = correction_response.content[0].text.strip()
+            if raw_corrections.startswith("```"):
+                raw_corrections = raw_corrections.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            try:
+                corrections_list = json.loads(raw_corrections)
+            except Exception:
+                corrections_list = [{"original": s, "corrected": s} for s in raw_sentences]
+            english_for_search = " ".join([c["corrected"] for c in corrections_list])
+            original_input_label = f"Student wrote multiple sentences in English. Corrected text: \"{english_for_search}\""
 
-    # Step 3: Generate the full learning response in one call
+    # RAG: search ChromaDB for similar book sentences
+    query_embedding = embedding_model.encode(english_for_search).tolist()
+    rag_results = collection.query(query_embeddings=[query_embedding], n_results=2)
+    book_sentences_with_location = []
+    if rag_results and rag_results['documents']:
+        for doc, meta in zip(rag_results['documents'][0], rag_results['metadatas'][0]):
+            chapter_name = meta.get('chapter_name', '')
+            physical_page = max(1, meta.get('page', 6) - 6)
+            location = f"(Ch: {chapter_name}, p.{physical_page})" if chapter_name else ""
+            book_sentences_with_location.append({"text": doc, "location": location})
+
     prompt = f"""You are Romira, an English learning assistant for a Persian-speaking student.
 
 Student: {student.name}
@@ -73,23 +87,21 @@ Level: {student.level}
 Book: "{student.book}"
 Known grammar errors: {json.dumps(error_list, ensure_ascii=False)}
 
-The student wrote in Persian: "{body.persian_input}"
-English translation: "{english_for_search}"
+{original_input_label}
 
 Relevant sentences from their book:
 {json.dumps(book_sentences_with_location, ensure_ascii=False)}
 
-CRITICAL: Return ONLY a valid JSON object. No markdown, no backticks, no explanation before or after. The response must start with {{ and end with }}. Do not include any text outside the JSON object.
+CRITICAL: Return ONLY a valid JSON object. No markdown, no backticks, no explanation before or after. The response must start with {{ and end with }}.
 {{
-  "english_translation": "natural English translation of what the student wrote",
+  "english_translation": "{english_for_search}",
   "book_sentences": {json.dumps(book_sentences_with_location, ensure_ascii=False)},
   "grammar_point": "Analyze the English translation. Write in Persian only. Format exactly like this — 2 lines only, nothing else:\n[one short Persian sentence about sentence type, count, and structure — no English labels]\n[one short Persian sentence of additional insight for the student]",
   "sentence_parts": {{"subject": ["word or phrase"], "verb": ["word or phrase"], "object": ["word or phrase or empty list"], "other": ["any other notable parts or empty list"]}},
   "practice_exercises": ["She ___ (want) to go. | wants", "sentence 2 with blank | answer", "sentence 3 with blank | answer"]
 }}
 
-Each practice exercise MUST follow this exact format: fill-in-the-blank sentence with ___ for the missing word, then a space, then a pipe character |, then a space, then the correct answer. Example: "She ___ (want) to go out. | wants". No other format is acceptable.
-For sentence_parts: identify the grammatical roles in the english_translation sentence. Each value is a list of strings (words or phrases). Use empty list [] if a role doesn't exist."""
+Each practice exercise MUST follow this exact format: fill-in-the-blank sentence with ___ for the missing word, then a space, then a pipe character |, then a space, then the correct answer. No other format is acceptable."""
 
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
@@ -98,14 +110,9 @@ For sentence_parts: identify the grammatical roles in the english_translation se
     )
 
     raw = response.content[0].text.strip()
-
-    # Strip markdown fences if present
-    raw = raw.strip()
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[-1]
         raw = raw.rsplit("```", 1)[0].strip()
-
-    # Fix common JSON issues — trailing commas
     raw = re.sub(r',\s*}', '}', raw)
     raw = re.sub(r',\s*]', ']', raw)
 
@@ -116,7 +123,19 @@ For sentence_parts: identify the grammatical roles in the english_translation se
         print(f"Raw response: {raw[:500]}")
         raise HTTPException(status_code=500, detail=f"AI returned invalid JSON: {str(e)}")
 
-    # Save interaction
+    # Add corrections to result
+    if not is_persian:
+        if corrections_list:
+            result["corrections"] = corrections_list
+        elif body.persian_input.strip() != english_for_search:
+            result["correction_note"] = f"✏️ Corrected: \"{english_for_search}\""
+        else:
+            result["correction_note"] = None
+            result["corrections"] = None
+    else:
+        result["correction_note"] = None
+        result["corrections"] = None
+
     interaction = models.StudentInteraction(
         student_id=body.student_id,
         persian_input=body.persian_input,

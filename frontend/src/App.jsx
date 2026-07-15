@@ -90,6 +90,7 @@ function StudentView({ student, onExit }) {
   const [allCorrect, setAllCorrect] = useState(false)
   const [bookTranslations, setBookTranslations] = useState({})
   const [hints, setHints] = useState({})
+  const [inputDir, setInputDir] = useState('rtl')
   const [wordPopup, setWordPopup] = useState(null)
   const [wordMeaning, setWordMeaning] = useState(null)
   const [wordSaved, setWordSaved] = useState(false)
@@ -159,6 +160,7 @@ function StudentView({ student, onExit }) {
       setHints({})
       setCheckingAnswers(false)
       setInput('')
+      setInputDir('rtl')
     } catch (e) {
       setError(e.message)
     } finally {
@@ -444,18 +446,60 @@ function StudentView({ student, onExit }) {
 
         {result && (
           <div className="space-y-4">
-            {/* Translation */}
-            <div className="bg-gradient-to-r from-emerald-50 to-sky-50 rounded-2xl border-l-4 border-teal-500 px-5 py-5 fade-in shadow-sm">
-              <p className="text-xs font-semibold text-teal-600 uppercase tracking-wider mb-2">Translation</p>
-              <div className="flex items-start gap-3">
-                <p className="text-slate-800 text-lg font-medium leading-relaxed flex-1">
-                  {result.english_translation.split(' ').map((word, i) => (
-                    <span key={i} onClick={(e) => handleWordClick(word, e)} className="cursor-pointer hover:bg-yellow-100 hover:text-yellow-800 rounded px-0.5 transition-all">{word} </span>
-                  ))}
-                </p>
-                <button onClick={() => speak(result.english_translation)} className="text-teal-500 hover:text-teal-700 text-xl mt-1" title="Listen">🔊</button>
-              </div>
-            </div>
+            {result.corrections && result.corrections.length > 0 ? (
+              <>
+                {/* English mode: Corrections first, then Translation */}
+                <div className="rounded-2xl px-6 py-5 fade-in" style={{background: '#f0fdf4', border: '1.5px solid #86efac'}}>
+                  <p className="text-xs font-bold text-green-600 uppercase tracking-widest mb-3">✦ Sentence Corrections</p>
+                  <div className="space-y-3">
+                    {result.corrections.map((c, i) => (
+                      <div key={i} className="bg-white rounded-xl p-3 border border-green-100">
+                        {c.original !== c.corrected ? (
+                          <>
+                            <p className="text-sm text-red-400 line-through mb-1">{c.original}</p>
+                            <p className="text-sm font-semibold text-green-700">✓ {c.corrected}</p>
+                          </>
+                        ) : (
+                          <p className="text-sm font-semibold text-green-700">✓ {c.original} <span className="text-xs font-normal text-green-400">(correct)</span></p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-2xl px-6 py-5 fade-in" style={{background: 'linear-gradient(135deg, #f0fdf4 0%, #e0f2fe 100%)', border: '1.5px solid #99f6e4'}}>
+                  <p className="text-xs font-bold text-teal-600 uppercase tracking-widest mb-2">✦ Full Corrected Text</p>
+                  <div className="flex items-start gap-3">
+                    <p className="text-slate-800 text-lg font-medium leading-relaxed flex-1">
+                      {result.english_translation.split(' ').map((word, i) => (
+                        <span key={i} onClick={(e) => handleWordClick(word, e)} className="cursor-pointer hover:bg-yellow-100 hover:text-yellow-800 rounded px-0.5 transition-all">{word} </span>
+                      ))}
+                    </p>
+                    <button onClick={() => speak(result.english_translation)} className="text-teal-500 hover:text-teal-700 text-xl mt-1" title="Listen">🔊</button>
+                  </div>
+                  {result.correction_note && (
+                    <p className="mt-2 text-xs font-semibold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg">{result.correction_note}</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Persian mode or single sentence: Translation first */}
+                <div className="rounded-2xl px-6 py-5 fade-in" style={{background: 'linear-gradient(135deg, #f0fdf4 0%, #e0f2fe 100%)', border: '1.5px solid #99f6e4'}}>
+                  <p className="text-xs font-bold text-teal-600 uppercase tracking-widest mb-2">✦ Translation</p>
+                  <div className="flex items-start gap-3">
+                    <p className="text-slate-800 text-lg font-medium leading-relaxed flex-1">
+                      {result.english_translation.split(' ').map((word, i) => (
+                        <span key={i} onClick={(e) => handleWordClick(word, e)} className="cursor-pointer hover:bg-yellow-100 hover:text-yellow-800 rounded px-0.5 transition-all">{word} </span>
+                      ))}
+                    </p>
+                    <button onClick={() => speak(result.english_translation)} className="text-teal-500 hover:text-teal-700 text-xl mt-1" title="Listen">🔊</button>
+                  </div>
+                  {result.correction_note && (
+                    <p className="mt-2 text-xs font-semibold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg">{result.correction_note}</p>
+                  )}
+                </div>
+              </>
+            )}
 
             {/* Grammar */}
             {!revealed.grammar ? (
@@ -707,9 +751,15 @@ function StudentView({ student, onExit }) {
       <div className="shrink-0 bg-white border-t border-slate-200 px-4 pt-3 pb-4">
         <div className="flex gap-2 items-end">
           <textarea
-            dir="rtl"
+            dir={inputDir}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={e => {
+              setInput(e.target.value)
+              const firstChar = e.target.value.trim()[0]
+              if (firstChar) {
+                setInputDir(/[؀-ۿ]/.test(firstChar) ? 'rtl' : 'ltr')
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
