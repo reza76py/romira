@@ -76,20 +76,9 @@ function LoginView({ onLogin }) {
 function StudentView({ student, onExit }) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState(null)
-  const [revealed, setRevealed] = useState({ books: false, grammar: false, practice: false })
+  const [results, setResults] = useState([])
+  const [resultStates, setResultStates] = useState([])
   const [error, setError] = useState(null)
-  const [answers, setAnswers] = useState({})
-  const [feedback, setFeedback] = useState({})
-  const [explanations, setExplanations] = useState({})
-  const [retryDataMap, setRetryDataMap] = useState({})
-  const [retryTarget, setRetryTarget] = useState(null)
-  const [retryExercise, setRetryExercise] = useState(null)
-  const [retryAnswer, setRetryAnswer] = useState('')
-  const [retryFeedback, setRetryFeedback] = useState(null)
-  const [allCorrect, setAllCorrect] = useState(false)
-  const [bookTranslations, setBookTranslations] = useState({})
-  const [hints, setHints] = useState({})
   const [inputDir, setInputDir] = useState('rtl')
   const [wordPopup, setWordPopup] = useState(null)
   const [wordMeaning, setWordMeaning] = useState(null)
@@ -103,11 +92,11 @@ function StudentView({ student, onExit }) {
   const [sessionId, setSessionId] = useState(null)
   const [sessionStart, setSessionStart] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
-  const [grammarLineIndex, setGrammarLineIndex] = useState(0)
   const [progress, setProgress] = useState(null)
-  const [deepDive, setDeepDive] = useState(null)
-  const [deepDiveLoading, setDeepDiveLoading] = useState(false)
-  const [deepDiveLines, setDeepDiveLines] = useState(0)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [playSpeed, setPlaySpeed] = useState(1)
+  const [currentSentenceIdx, setCurrentSentenceIdx] = useState(0)
+  const [accumulatedText, setAccumulatedText] = useState('')
 
   useEffect(() => {
     logEvent('login')
@@ -116,28 +105,68 @@ function StudentView({ student, onExit }) {
       .then(p => setProgress(p))
   }, [])
 
+  function getDefaultRS() {
+    return {
+      revealed: {books: false, grammar: false, practice: false},
+      grammarLineIndex: 0,
+      deepDive: null,
+      deepDiveLoading: false,
+      deepDiveLines: 0,
+      feedback: {},
+      answers: {},
+      explanations: {},
+      allCorrect: false,
+      retryExercise: null,
+      retryAnswer: '',
+      retryFeedback: null,
+      retryTarget: null,
+      hints: {},
+      bookTranslations: {},
+      retryDataMap: {},
+    }
+  }
+
+  function getRS(idx) {
+    return resultStates[idx] || getDefaultRS()
+  }
+
+  function updateRS(idx, patch) {
+    setResultStates(prev => {
+      const next = [...prev]
+      next[idx] = {...(prev[idx] || getDefaultRS()), ...patch}
+      return next
+    })
+  }
+
   useEffect(() => {
     const handleKey = (e) => {
-      if (e.key === 'Enter' && result && grammarLineIndex < result.grammar_point.split('\n').filter(l => l.trim()).length) {
+      const lastIdx = results.length - 1
+      if (lastIdx < 0) return
+      const rs = getRS(lastIdx)
+      if (e.key === 'Enter' && results[lastIdx] && rs.grammarLineIndex < (results[lastIdx].grammar_point?.split('\n').filter(l => l.trim()).length || 0)) {
         e.preventDefault()
-        setGrammarLineIndex(prev => prev + 1)
+        updateRS(lastIdx, {grammarLineIndex: rs.grammarLineIndex + 1})
       }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [result, grammarLineIndex])
+  }, [results, resultStates])
 
   async function handleSend() {
     if (!input.trim() || loading) return
     setLoading(true)
-    setResult(null)
-    setRevealed({ books: false, grammar: false, practice: false })
     setError(null)
     try {
+      let textToSubmit = input.trim()
+      const isEnglish = /^[^؀-ۿ]+$/.test(textToSubmit)
+      if (isEnglish && accumulatedText) {
+        textToSubmit = accumulatedText.trimEnd() + '. ' + textToSubmit
+      }
+      setAccumulatedText(isEnglish ? textToSubmit : '')
       const res = await fetch('/api/student/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ student_id: student.id, persian_input: input.trim() }),
+        body: JSON.stringify({ student_id: student.id, persian_input: textToSubmit }),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
@@ -145,26 +174,14 @@ function StudentView({ student, onExit }) {
       }
       const data = await res.json()
       await closeSession(false)
-      setResult(data)
+      setResults([data])
+      setResultStates([getDefaultRS()])
       setSessionId(data.id)
       setSessionStart(Date.now())
       setRetryCount(0)
-      setGrammarLineIndex(0)
-      setAnswers({})
-      setFeedback({})
-      setExplanations({})
-      setRetryDataMap({})
-      setRetryTarget(null)
-      setRetryExercise(null)
-      setRetryAnswer('')
-      setRetryFeedback(null)
-      setAllCorrect(false)
-      setBookTranslations({})
-      setHints({})
-      setDeepDive(null)
-      setDeepDiveLoading(false)
-      setDeepDiveLines(0)
-      setCheckingAnswers(false)
+      setIsPlaying(false)
+      setCurrentSentenceIdx(0)
+      setPlaySpeed(1)
       setInput('')
       setInputDir('rtl')
     } catch (e) {
@@ -174,16 +191,16 @@ function StudentView({ student, onExit }) {
     }
   }
 
-  function reveal(key) {
-    setRevealed((r) => ({ ...r, [key]: true }))
-  }
-
   function speak(text) {
     window.speechSynthesis.cancel()
     const utter = new SpeechSynthesisUtterance(text)
     utter.lang = 'en-GB'
     utter.rate = 0.85
     window.speechSynthesis.speak(utter)
+  }
+
+  function splitIntoSentences(text) {
+    return text.match(/[^.!?]+[.!?]+/g) || [text]
   }
 
   function handleWordClick(word, e) {
@@ -216,22 +233,22 @@ function StudentView({ student, onExit }) {
       .then(d => setVocabList(d))
   }
 
-  async function handleDeepDive() {
-    setDeepDiveLoading(true)
+  async function handleDeepDive(idx) {
+    updateRS(idx, {deepDiveLoading: true})
     const res = await fetch('/api/student/analyze/deep-dive', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text: result.english_translation})
+      body: JSON.stringify({text: results[idx].english_translation})
     })
     const data = await res.json()
-    setDeepDive(data.points)
-    setDeepDiveLines(0)
-    setDeepDiveLoading(false)
+    updateRS(idx, {deepDive: data.points, deepDiveLines: 0, deepDiveLoading: false})
   }
 
-  async function handleCheckAnswers() {
+  async function handleCheckAnswers(idx) {
+    const rs = getRS(idx)
+    const result = results[idx]
     setCheckingAnswers(true)
-    logEvent('submit_answer', { answers, interaction_id: sessionId })
+    logEvent('submit_answer', { answers: rs.answers, interaction_id: sessionId })
     const exs = result.practice_exercises.map(ex => {
       const [sentence, answer] = ex.split(' | ')
       return { sentence: sentence.trim(), answer: (answer || '').trim() }
@@ -242,7 +259,7 @@ function StudentView({ student, onExit }) {
 
     for (let i = 0; i < exs.length; i++) {
       const correct = exs[i].answer.toLowerCase()
-      const user = (answers[i] || '').trim().toLowerCase()
+      const user = (rs.answers[i] || '').trim().toLowerCase()
       if (user === correct) {
         newFeedback[i] = true
       } else {
@@ -252,14 +269,14 @@ function StudentView({ student, onExit }) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               student_id: student.id,
-              wrong_answer: answers[i] || '',
+              wrong_answer: rs.answers[i] || '',
               correct_answer: exs[i].answer,
               grammar_point: result.grammar_point,
             }),
           })
           const data = await res.json()
           setRetryCount(prev => prev + 1)
-          logEvent('retry', { wrong_answer: answers[i], interaction_id: sessionId })
+          logEvent('retry', { wrong_answer: rs.answers[i], interaction_id: sessionId })
           newFeedback[i] = false
           newExplanations[i] = data.simpler_explanation
           const [rSent, rAns] = (data.new_practice || '').split(' | ')
@@ -270,11 +287,8 @@ function StudentView({ student, onExit }) {
       }
     }
 
-    setFeedback(newFeedback)
-    setExplanations(newExplanations)
-    setRetryDataMap(newRetryDataMap)
     const allC = exs.length > 0 && Object.values(newFeedback).every(f => f === true)
-    setAllCorrect(allC)
+    updateRS(idx, {feedback: newFeedback, explanations: newExplanations, retryDataMap: newRetryDataMap, allCorrect: allC})
     if (allC) closeSession(true)
     setCheckingAnswers(false)
   }
@@ -395,13 +409,6 @@ function StudentView({ student, onExit }) {
     )
   }
 
-  const exercises = result
-    ? result.practice_exercises.map(ex => {
-        const [sentence, answer] = ex.split(' | ')
-        return { sentence: sentence.trim(), answer: (answer || '').trim() }
-      })
-    : []
-
   return (
     <div className="flex flex-col bg-amber-50" style={{ height: '100dvh' }}>
       {/* Header */}
@@ -414,11 +421,19 @@ function StudentView({ student, onExit }) {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-teal-100 font-medium">Hello, {student.name} 👋</span>
+          {results.length > 0 && (
+            <button
+              onClick={() => { setResults([]); setResultStates([]); setAccumulatedText('') }}
+              className="text-sm font-semibold text-white bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1.5 rounded-lg"
+            >
+              🔄 Start Over
+            </button>
+          )}
           <button onClick={() => { setShowVocab(true); loadVocab(); setExpandedBox(null); setFlippedCards({}); setReviewedCards({}) }} className="text-sm font-semibold text-white bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1.5 rounded-lg mr-2">
             📚 My Words
           </button>
           <button
-            onClick={async () => { logEvent('exit', { interaction_id: sessionId }); await closeSession(false); onExit() }}
+            onClick={async () => { logEvent('exit', { interaction_id: sessionId }); await closeSession(false); setAccumulatedText(''); onExit() }}
             className="text-xs text-teal-200 hover:text-white border border-teal-500 hover:border-teal-300 px-3 py-1.5 rounded-lg transition-colors"
           >
             Exit
@@ -441,7 +456,7 @@ function StudentView({ student, onExit }) {
           </div>
         )}
 
-        {progress && !result && (
+        {progress && results.length === 0 && (
           <div className="rounded-2xl px-5 py-4 fade-in" style={{background: 'linear-gradient(135deg, #fef9c3, #fef3c7)', border: '1.5px solid #fcd34d'}}>
             <p className="text-xs font-bold text-amber-600 uppercase tracking-widest mb-2">✦ Your Progress</p>
             <div className="flex gap-6 text-sm">
@@ -463,79 +478,84 @@ function StudentView({ student, onExit }) {
           </div>
         )}
 
-        {result && (
-          <div className="space-y-4">
-            {result.corrections && result.corrections.length > 0 ? (
-              <>
-                {/* English mode: Corrections first, then Translation */}
-                <div className="rounded-2xl px-6 py-5 fade-in" style={{background: '#f0fdf4', border: '1.5px solid #86efac'}}>
-                  <p className="text-xs font-bold text-green-600 uppercase tracking-widest mb-3">✦ Sentence Corrections</p>
-                  <div className="space-y-3">
-                    {result.corrections.map((c, i) => (
-                      <div key={i} className="bg-white rounded-xl p-3 border border-green-100">
-                        {c.original !== c.corrected ? (
-                          <>
-                            <p className="text-sm mb-1">
-                              {c.original.split(' ').map((word, wi) => {
-                                const cleanWord = word.replace(/[.,!?;:'"]/g, '').toLowerCase()
-                                const isWrong = c.wrong_words && c.wrong_words.some(w =>
-                                  w.toLowerCase().replace(/[.,!?;:'"]/g, '') === cleanWord
-                                )
-                                return (
-                                  <span key={wi} className={isWrong ? 'text-red-500 font-bold bg-red-50 rounded px-0.5' : 'text-blue-600'}>
-                                    {word}{' '}
-                                  </span>
-                                )
-                              })}
-                            </p>
-                            <p className="text-sm font-semibold text-green-700">✓ {c.corrected}</p>
-                          </>
-                        ) : (
-                          <p className="text-sm font-semibold text-green-700">✓ {c.original} <span className="text-xs font-normal text-green-400">(correct)</span></p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="rounded-2xl px-6 py-5 fade-in" style={{background: 'linear-gradient(135deg, #f0fdf4 0%, #e0f2fe 100%)', border: '1.5px solid #99f6e4'}}>
-                  <p className="text-xs font-bold text-teal-600 uppercase tracking-widest mb-2">✦ Full Corrected Text</p>
-                  <div className="flex items-start gap-3">
-                    <p className="text-slate-800 text-lg font-medium leading-relaxed flex-1">
-                      {result.english_translation.split(' ').map((word, i) => (
-                        <span key={i} onClick={(e) => handleWordClick(word, e)} className="cursor-pointer hover:bg-yellow-100 hover:text-yellow-800 rounded px-0.5 transition-all">{word} </span>
-                      ))}
-                    </p>
-                    <button onClick={() => speak(result.english_translation)} className="text-teal-500 hover:text-teal-700 text-xl mt-1" title="Listen">🔊</button>
-                  </div>
-                  {result.correction_note && (
-                    <p className="mt-2 text-xs font-semibold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg">{result.correction_note}</p>
-                  )}
-                </div>
-              </>
-            ) : (
-              <>
-                {/* Persian mode or single sentence: Translation first */}
-                <div className="rounded-2xl px-6 py-5 fade-in" style={{background: 'linear-gradient(135deg, #f0fdf4 0%, #e0f2fe 100%)', border: '1.5px solid #99f6e4'}}>
-                  <p className="text-xs font-bold text-teal-600 uppercase tracking-widest mb-2">✦ Translation</p>
-                  <div className="flex items-start gap-3">
-                    <p className="text-slate-800 text-lg font-medium leading-relaxed flex-1">
-                      {result.english_translation.split(' ').map((word, i) => (
-                        <span key={i} onClick={(e) => handleWordClick(word, e)} className="cursor-pointer hover:bg-yellow-100 hover:text-yellow-800 rounded px-0.5 transition-all">{word} </span>
-                      ))}
-                    </p>
-                    <button onClick={() => speak(result.english_translation)} className="text-teal-500 hover:text-teal-700 text-xl mt-1" title="Listen">🔊</button>
-                  </div>
-                  {result.correction_note && (
-                    <p className="mt-2 text-xs font-semibold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg">{result.correction_note}</p>
-                  )}
-                </div>
-              </>
+        {results.map((result, idx) => {
+          const rs = getRS(idx)
+          const exercises = result.practice_exercises.map(ex => {
+            const [sentence, answer] = ex.split(' | ')
+            return { sentence: sentence.trim(), answer: (answer || '').trim() }
+          })
+          return (
+          <div key={idx} className="space-y-3">
+            {results.length > 1 && (
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">#{idx + 1}</p>
             )}
+            {/* Sentence Panel — always shown */}
+            <div className="rounded-2xl px-6 py-5 fade-in" style={{background: '#f0fdf4', border: '1.5px solid #86efac'}}>
+              <p className="text-xs font-bold text-green-600 uppercase tracking-widest mb-3">✦ {result.corrections ? 'Sentence Corrections' : 'Translation'}</p>
+              <div className="space-y-3">
+                {(result.corrections || splitIntoSentences(result.english_translation).map(s => ({original: s, corrected: s, wrong_words: []}))).map((c, i) => (
+                  <div key={i} className="bg-white rounded-xl p-3 border border-green-100">
+                    {c.original !== c.corrected ? (
+                      <p className="text-sm mb-2">
+                        {c.original.split(' ').map((word, wi) => {
+                          const cleanWord = word.replace(/[.,!?;:'"]/g, '').toLowerCase()
+                          const isWrong = c.wrong_words && c.wrong_words.some(w =>
+                            w.toLowerCase().replace(/[.,!?;:'"]/g, '') === cleanWord
+                          )
+                          return (
+                            <span key={wi} className={isWrong ? 'text-red-500 font-bold bg-red-50 rounded px-0.5' : 'text-blue-600'}>
+                              {word}{' '}
+                            </span>
+                          )
+                        })}
+                      </p>
+                    ) : null}
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-green-700 flex-1">
+                        {c.original !== c.corrected ? <>✓ {c.corrected}</> : c.corrected}
+                      </p>
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => {
+                              window.speechSynthesis.cancel()
+                              setCurrentSentenceIdx(i)
+                              const utter = new SpeechSynthesisUtterance(c.corrected)
+                              utter.lang = 'en-GB'
+                              utter.rate = playSpeed
+                              window.speechSynthesis.speak(utter)
+                              setIsPlaying(true)
+                              utter.onend = () => setIsPlaying(false)
+                            }}
+                            className="w-8 h-8 rounded-full bg-teal-500 hover:bg-teal-600 text-white flex items-center justify-center text-sm shadow"
+                          >▶</button>
+                          <button
+                            onClick={() => { window.speechSynthesis.cancel(); setIsPlaying(false) }}
+                            className="w-7 h-7 rounded-full bg-teal-100 hover:bg-teal-200 text-teal-700 flex items-center justify-center text-xs"
+                          >⏹</button>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {[0.6, 0.85, 1, 1.2].map(s => (
+                            <button
+                              key={s}
+                              onClick={() => setPlaySpeed(s)}
+                              className={`text-xs px-1.5 py-0.5 rounded-full font-semibold transition-all ${playSpeed === s ? 'bg-teal-500 text-white' : 'bg-teal-50 text-teal-600 hover:bg-teal-100'}`}
+                            >
+                              {s === 0.6 ? '🐢' : s === 0.85 ? '.85x' : s === 1 ? '1x' : '1.2x'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
 
             {/* Grammar */}
-            {!revealed.grammar ? (
+            {!rs.revealed.grammar ? (
               <button
-                onClick={() => { reveal('grammar'); logEvent('press_grammar', { interaction_id: sessionId }) }}
+                onClick={() => { updateRS(idx, {revealed: {...rs.revealed, grammar: true}}); logEvent('press_grammar', { interaction_id: sessionId }) }}
                 className="w-full text-left bg-white hover:bg-purple-50 border border-purple-200 rounded-2xl px-5 py-3 text-sm text-purple-700 font-medium transition-colors"
               >
                 Grammar points ✏️
@@ -561,15 +581,15 @@ function StudentView({ student, onExit }) {
                   </div>
                 )}
                 <div className="text-slate-700 text-sm leading-relaxed space-y-2">
-                  {result.grammar_point.split('\n').filter(l => l.trim()).slice(0, grammarLineIndex).map((line, i) => (
+                  {result.grammar_point.split('\n').filter(l => l.trim()).slice(0, rs.grammarLineIndex).map((line, i) => (
                     <p key={i} style={line.match(/[؀-ۿ]/) ? {...PERSIAN_FONT, direction: 'rtl'} : {direction: 'ltr'}}>
                       {line}
                     </p>
                   ))}
                 </div>
-                {grammarLineIndex < result.grammar_point.split('\n').filter(l => l.trim()).length && (
+                {rs.grammarLineIndex < result.grammar_point.split('\n').filter(l => l.trim()).length && (
                   <button
-                    onClick={() => setGrammarLineIndex(prev => prev + 1)}
+                    onClick={() => updateRS(idx, {grammarLineIndex: rs.grammarLineIndex + 1})}
                     className="mt-3 text-xs text-purple-500 hover:text-purple-700 font-medium"
                   >
                     Press Enter or tap to reveal next ↓
@@ -579,14 +599,14 @@ function StudentView({ student, onExit }) {
             )}
 
             {/* Level 2 — Deep Dive */}
-            {!deepDive && !deepDiveLoading ? (
+            {!rs.deepDive && !rs.deepDiveLoading ? (
               <button
-                onClick={handleDeepDive}
+                onClick={() => handleDeepDive(idx)}
                 className="w-full rounded-2xl px-5 py-4 text-left font-semibold text-indigo-700 bg-indigo-50 border-2 border-dashed border-indigo-200 hover:bg-indigo-100 transition-all fade-in"
               >
                 🔍 Deep Dive — tenses, conjunctions, reported speech
               </button>
-            ) : deepDiveLoading ? (
+            ) : rs.deepDiveLoading ? (
               <div className="rounded-2xl px-6 py-5 fade-in" style={{background: '#eef2ff', border: '1.5px solid #a5b4fc'}}>
                 <p className="text-indigo-400 text-sm animate-pulse">Analyzing...</p>
               </div>
@@ -596,22 +616,22 @@ function StudentView({ student, onExit }) {
                 <div className="mb-4 p-4 bg-white rounded-xl border border-indigo-100 text-base font-medium leading-loose">
                   {result.english_translation.split(' ').map((word, i) => {
                     const clean = word.replace(/[.,!?;:'"]/g, '').toLowerCase()
-                    const currentHighlights = deepDiveLines > 0 && deepDive[deepDiveLines - 1]?.highlight
-                      ? deepDive[deepDiveLines - 1].highlight
+                    const currentHighlights = rs.deepDiveLines > 0 && rs.deepDive[rs.deepDiveLines - 1]?.highlight
+                      ? rs.deepDive[rs.deepDiveLines - 1].highlight
                       : []
                     const isHighlighted = currentHighlights.some(h => h.toLowerCase().includes(clean) || clean.includes(h.toLowerCase().replace(/[.,!?;:'"]/g, '')))
                     return <span key={i} className={isHighlighted ? 'bg-yellow-200 text-yellow-900 font-bold rounded px-0.5' : 'text-slate-700'}>{word} </span>
                   })}
                 </div>
                 <div className="space-y-2">
-                  {Array.isArray(deepDive) && deepDive.slice(0, deepDiveLines).map((point, i) => (
+                  {Array.isArray(rs.deepDive) && rs.deepDive.slice(0, rs.deepDiveLines).map((point, i) => (
                     <p key={i} className="text-sm leading-relaxed" style={{...PERSIAN_FONT, direction: 'rtl', color: '#3730a3'}}>
                       {point.persian}
                     </p>
                   ))}
                 </div>
-                {Array.isArray(deepDive) && deepDiveLines < deepDive.length && (
-                  <button onClick={() => setDeepDiveLines(prev => prev + 1)} className="mt-3 text-xs text-indigo-400 hover:text-indigo-600 font-medium animate-pulse">
+                {Array.isArray(rs.deepDive) && rs.deepDiveLines < rs.deepDive.length && (
+                  <button onClick={() => updateRS(idx, {deepDiveLines: rs.deepDiveLines + 1})} className="mt-3 text-xs text-indigo-400 hover:text-indigo-600 font-medium animate-pulse">
                     ↓ tap to reveal more
                   </button>
                 )}
@@ -619,9 +639,9 @@ function StudentView({ student, onExit }) {
             )}
 
             {/* From the Book */}
-            {!revealed.books ? (
+            {!rs.revealed.books ? (
               <button
-                onClick={() => { reveal('books'); logEvent('press_book', { interaction_id: sessionId }) }}
+                onClick={() => { updateRS(idx, {revealed: {...rs.revealed, books: true}}); logEvent('press_book', { interaction_id: sessionId }) }}
                 className="w-full text-left bg-white hover:bg-teal-50 border border-teal-200 rounded-2xl px-5 py-3 text-sm text-teal-700 font-medium transition-colors"
               >
                 Similar sentences from the book 📖
@@ -638,24 +658,32 @@ function StudentView({ student, onExit }) {
                     {s.location && <p className="text-xs text-teal-500 mt-1 font-semibold">{s.location}</p>}
                     <button
                       onClick={() => {
-                        if (bookTranslations[i]) {
-                          setBookTranslations(t => {const n = {...t}; delete n[i]; return n})
+                        if (rs.bookTranslations[i]) {
+                          const n = {...rs.bookTranslations}; delete n[i]
+                          updateRS(idx, {bookTranslations: n})
                         } else {
-                          setBookTranslations(t => ({...t, [`loading_${i}`]: true}))
+                          updateRS(idx, {bookTranslations: {...rs.bookTranslations, [`loading_${i}`]: true}})
                           fetch('/api/student/translate-sentence', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
                             body: JSON.stringify({sentence: s.text || s})
-                          }).then(r => r.json()).then(data => setBookTranslations(t => ({...t, [i]: data.translation, [`loading_${i}`]: false})))
+                          }).then(r => r.json()).then(data => {
+                            setResultStates(prev => {
+                              const next = [...prev]
+                              const cur = prev[idx] || getDefaultRS()
+                              next[idx] = {...cur, bookTranslations: {...cur.bookTranslations, [i]: data.translation, [`loading_${i}`]: false}}
+                              return next
+                            })
+                          })
                         }
                       }}
                       className="mt-2 text-xs font-bold text-teal-600 hover:text-teal-800 bg-teal-50 hover:bg-teal-100 px-3 py-1 rounded-full border border-teal-200 transition-all"
                     >
-                      {bookTranslations[`loading_${i}`] ? '...' : bookTranslations[i] ? '▲ بستن' : 'ترجمه ▼'}
+                      {rs.bookTranslations[`loading_${i}`] ? '...' : rs.bookTranslations[i] ? '▲ بستن' : 'ترجمه ▼'}
                     </button>
-                    {bookTranslations[i] && (
+                    {rs.bookTranslations[i] && (
                       <p className="mt-2 text-sm text-teal-800 bg-teal-50 rounded-lg px-3 py-2" style={{...PERSIAN_FONT, direction: 'rtl'}}>
-                        {bookTranslations[i]}
+                        {rs.bookTranslations[i]}
                       </p>
                     )}
                   </div>
@@ -664,9 +692,9 @@ function StudentView({ student, onExit }) {
             )}
 
             {/* Practice */}
-            {!revealed.practice ? (
+            {!rs.revealed.practice ? (
               <button
-                onClick={() => { reveal('practice'); logEvent('press_practice', { interaction_id: sessionId }) }}
+                onClick={() => { updateRS(idx, {revealed: {...rs.revealed, practice: true}}); logEvent('press_practice', { interaction_id: sessionId }) }}
                 className="w-full text-left bg-white hover:bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3 text-sm text-amber-700 font-medium transition-colors"
               >
                 Practice 📝
@@ -676,31 +704,31 @@ function StudentView({ student, onExit }) {
                 <p className="text-xs font-semibold text-amber-600 uppercase tracking-wider mb-3">Practice</p>
                 <div className="space-y-5">
                   {exercises.map((ex, i) => {
-                    const checked = feedback[i] !== undefined
-                    const isCorrect = feedback[i] === true
+                    const checked = rs.feedback[i] !== undefined
+                    const isCorrect = rs.feedback[i] === true
                     return (
                       <div key={i} className="space-y-2">
                         <p className="text-slate-800 text-sm">{ex.sentence}</p>
                         <input
                           type="text"
-                          value={answers[i] || ''}
-                          onChange={(e) => setAnswers(a => ({ ...a, [i]: e.target.value }))}
+                          value={rs.answers[i] || ''}
+                          onChange={(e) => updateRS(idx, {answers: {...rs.answers, [i]: e.target.value}})}
                           onKeyDown={(e) => {
-                            if (e.key === 'Enter' && Object.keys(feedback).length === 0) handleCheckAnswers()
+                            if (e.key === 'Enter' && Object.keys(rs.feedback).length === 0) handleCheckAnswers(idx)
                           }}
                           disabled={checked}
                           placeholder="Your answer..."
                           className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-slate-50"
                         />
-                        {feedback[i] === undefined && !hints[i] && (
+                        {rs.feedback[i] === undefined && !rs.hints[i] && (
                           <button
-                            onClick={() => setHints(h => ({...h, [i]: ex.answer[0] + '...'}))}
+                            onClick={() => updateRS(idx, {hints: {...rs.hints, [i]: ex.answer[0] + '...'}})}
                             className="mt-1 text-xs text-amber-500 hover:text-amber-700 font-medium"
                           >
                             💡 Hint
                           </button>
                         )}
-                        {hints[i] && <p className="mt-1 text-xs text-amber-600 font-semibold">💡 Starts with: <span className="font-bold">{hints[i]}</span></p>}
+                        {rs.hints[i] && <p className="mt-1 text-xs text-amber-600 font-semibold">💡 Starts with: <span className="font-bold">{rs.hints[i]}</span></p>}
 
                         {checked && (
                           <div className="ml-4 space-y-2">
@@ -711,45 +739,40 @@ function StudentView({ student, onExit }) {
                                 <p className="text-red-500 text-sm font-medium">
                                   ✗ Correct answer: <span className="font-bold">{ex.answer}</span>
                                 </p>
-                                {explanations[i] && (
+                                {rs.explanations[i] && (
                                   <div className="bg-purple-50 rounded-xl px-4 py-3">
                                     <p className="text-xs font-semibold text-purple-400 uppercase tracking-wider mb-1">Explanation</p>
                                     <p className="text-slate-700 text-sm leading-relaxed" dir="rtl" style={PERSIAN_FONT}>
-                                      {explanations[i]}
+                                      {rs.explanations[i]}
                                     </p>
                                   </div>
                                 )}
-                                {retryDataMap[i] && retryTarget !== i && (
+                                {rs.retryDataMap[i] && rs.retryTarget !== i && (
                                   <button
-                                    onClick={() => {
-                                      setRetryTarget(i)
-                                      setRetryExercise(retryDataMap[i])
-                                      setRetryAnswer('')
-                                      setRetryFeedback(null)
-                                    }}
+                                    onClick={() => updateRS(idx, {retryTarget: i, retryExercise: rs.retryDataMap[i], retryAnswer: '', retryFeedback: null})}
                                     className="text-sm bg-amber-50 hover:bg-amber-100 text-amber-700 font-medium px-4 py-2 rounded-xl transition-colors"
                                   >
                                     Try again →
                                   </button>
                                 )}
-                                {retryTarget === i && retryExercise && (
+                                {rs.retryTarget === i && rs.retryExercise && (
                                   <div className="space-y-2 bg-emerald-50 rounded-xl px-4 py-3">
-                                    <p className="text-slate-700 text-sm">{retryExercise.sentence}</p>
+                                    <p className="text-slate-700 text-sm">{rs.retryExercise.sentence}</p>
                                     <input
                                       type="text"
-                                      value={retryAnswer}
-                                      onChange={(e) => setRetryAnswer(e.target.value)}
-                                      disabled={retryFeedback !== null}
+                                      value={rs.retryAnswer}
+                                      onChange={(e) => updateRS(idx, {retryAnswer: e.target.value})}
+                                      disabled={rs.retryFeedback !== null}
                                       placeholder="Your answer..."
                                       className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:bg-slate-50"
                                     />
-                                    {retryFeedback === null && (
+                                    {rs.retryFeedback === null && (
                                       <button
                                         onClick={async () => {
-                                          const correct = retryExercise.answer.toLowerCase()
-                                          const user = retryAnswer.trim().toLowerCase()
+                                          const correct = rs.retryExercise.answer.toLowerCase()
+                                          const user = rs.retryAnswer.trim().toLowerCase()
                                           if (user === correct) {
-                                            setRetryFeedback(true)
+                                            updateRS(idx, {retryFeedback: true})
                                           } else {
                                             try {
                                               const res = await fetch('/api/student/retry', {
@@ -757,21 +780,28 @@ function StudentView({ student, onExit }) {
                                                 headers: { 'Content-Type': 'application/json' },
                                                 body: JSON.stringify({
                                                   student_id: student.id,
-                                                  wrong_answer: retryAnswer,
-                                                  correct_answer: retryExercise.answer,
+                                                  wrong_answer: rs.retryAnswer,
+                                                  correct_answer: rs.retryExercise.answer,
                                                   grammar_point: result.grammar_point
                                                 })
                                               })
                                               const data = await res.json()
                                               setRetryCount(prev => prev + 1)
-                                              logEvent('retry', { wrong_answer: retryAnswer, interaction_id: sessionId })
+                                              logEvent('retry', { wrong_answer: rs.retryAnswer, interaction_id: sessionId })
                                               const [rSent, rAns] = (data.new_practice || '').split(' | ')
-                                              setRetryExercise({ sentence: (rSent || '').trim(), answer: (rAns || '').trim() })
-                                              setExplanations(prev => ({ ...prev, [i]: data.simpler_explanation }))
-                                              setRetryAnswer('')
-                                              setRetryFeedback(null)
+                                              setResultStates(prev => {
+                                                const next = [...prev]
+                                                const cur = prev[idx] || getDefaultRS()
+                                                next[idx] = {...cur,
+                                                  retryExercise: { sentence: (rSent || '').trim(), answer: (rAns || '').trim() },
+                                                  explanations: {...cur.explanations, [i]: data.simpler_explanation},
+                                                  retryAnswer: '',
+                                                  retryFeedback: null,
+                                                }
+                                                return next
+                                              })
                                             } catch {
-                                              setRetryFeedback(false)
+                                              updateRS(idx, {retryFeedback: false})
                                             }
                                           }
                                         }}
@@ -780,10 +810,10 @@ function StudentView({ student, onExit }) {
                                         Check
                                       </button>
                                     )}
-                                    {retryFeedback === true && (
+                                    {rs.retryFeedback === true && (
                                       <p className="text-sm font-medium text-emerald-600">✓ Well done!</p>
                                     )}
-                                    {retryFeedback === false && (
+                                    {rs.retryFeedback === false && (
                                       <p className="text-sm font-medium text-red-500">✗ Keep practicing!</p>
                                     )}
                                   </div>
@@ -797,9 +827,9 @@ function StudentView({ student, onExit }) {
                   })}
                 </div>
 
-                {Object.keys(feedback).length === 0 && (
+                {Object.keys(rs.feedback).length === 0 && (
                   <button
-                    onClick={handleCheckAnswers}
+                    onClick={() => handleCheckAnswers(idx)}
                     disabled={checkingAnswers}
                     className="mt-5 w-full bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-medium py-2.5 rounded-xl transition-colors text-sm"
                   >
@@ -807,7 +837,7 @@ function StudentView({ student, onExit }) {
                   </button>
                 )}
 
-                {allCorrect && (
+                {rs.allCorrect && (
                   <p className="mt-4 text-center text-sm text-emerald-600 font-medium">
                     🎉 All correct! Great work!
                   </p>
@@ -815,11 +845,18 @@ function StudentView({ student, onExit }) {
               </div>
             )}
           </div>
-        )}
+          )
+        })}
       </main>
 
       {/* Input — sticky footer */}
       <div className="shrink-0 bg-white border-t border-slate-200 px-4 pt-3 pb-4">
+        {accumulatedText && (
+          <div className="flex items-center gap-2 mb-1 px-1">
+            <p className="text-xs text-slate-400">📝 Building on: "{accumulatedText.slice(0, 60)}{accumulatedText.length > 60 ? '...' : ''}"</p>
+            <button onClick={() => setAccumulatedText('')} className="text-xs text-red-400 hover:text-red-600">✕ clear</button>
+          </div>
+        )}
         <div className="flex gap-2 items-end">
           <textarea
             dir={inputDir}
