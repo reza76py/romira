@@ -123,6 +123,13 @@ function StudentView({ student, onExit }) {
       hints: {},
       bookTranslations: {},
       retryDataMap: {},
+      tenseResult: null,
+      tenseLoading: false,
+      activeTense: null,
+      tensesRevealed: false,
+      tenseStory: null,
+      tenseStoryLoading: false,
+      showTenseStory: false,
     }
   }
 
@@ -634,6 +641,78 @@ function StudentView({ student, onExit }) {
                   <button onClick={() => updateRS(idx, {deepDiveLines: rs.deepDiveLines + 1})} className="mt-3 text-xs text-indigo-400 hover:text-indigo-600 font-medium animate-pulse">
                     ↓ tap to reveal more
                   </button>
+                )}
+              </div>
+            )}
+
+            {/* Tenses Section */}
+            {!rs.tensesRevealed ? (
+              <button
+                onClick={() => updateRS(idx, {tensesRevealed: true})}
+                className="w-full rounded-2xl px-5 py-4 text-left font-semibold text-cyan-700 bg-cyan-50 border-2 border-dashed border-cyan-200 hover:bg-cyan-100 transition-all fade-in"
+              >
+                🕐 Tenses — rewrite in different tenses
+              </button>
+            ) : (
+              <div className="rounded-2xl px-6 py-5 fade-in" style={{background: '#ecfeff', border: '1.5px solid #67e8f9'}}>
+                <p className="text-xs font-bold text-cyan-600 uppercase tracking-widest mb-3">🕐 Tenses</p>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {['Simple Present', 'Present Continuous', 'Present Perfect', 'Simple Past', 'Past Continuous', 'Future'].map(tense => (
+                    <button
+                      key={tense}
+                      onClick={() => {
+                        updateRS(idx, {activeTense: tense, tenseLoading: true, tenseResult: null, showTenseStory: false, tenseStory: null})
+                        fetch('/api/student/analyze/tense', {
+                          method: 'POST',
+                          headers: {'Content-Type': 'application/json'},
+                          body: JSON.stringify({text: result.english_translation, tense})
+                        }).then(r => r.json()).then(data => updateRS(idx, {tenseResult: data.rewritten, tenseLoading: false}))
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-sm font-semibold border transition-all ${rs.activeTense === tense ? 'bg-cyan-500 text-white border-cyan-500' : 'bg-white text-cyan-700 border-cyan-300 hover:bg-cyan-50'}`}
+                    >
+                      {tense}
+                    </button>
+                  ))}
+                </div>
+                {rs.tenseLoading && (
+                  <p className="text-cyan-400 text-sm animate-pulse">Rewriting...</p>
+                )}
+                {rs.tenseResult && (
+                  <div className="bg-white rounded-xl p-4 border border-cyan-100">
+                    <p className="text-xs font-bold text-cyan-500 uppercase tracking-widest mb-2">{rs.activeTense}</p>
+                    <p className="text-slate-800 text-sm font-medium leading-relaxed">{rs.tenseResult}</p>
+                    <button
+                      onClick={() => speak(rs.tenseResult)}
+                      className="mt-2 text-cyan-400 hover:text-cyan-600 text-sm"
+                    >🔊 Listen</button>
+                    {!rs.showTenseStory ? (
+                      <button
+                        onClick={() => {
+                          updateRS(idx, {showTenseStory: true, tenseStoryLoading: true, tenseStory: null})
+                          fetch('/api/student/analyze/tense-story', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({text: result.english_translation, tense: rs.activeTense})
+                          }).then(r => r.json()).then(data => updateRS(idx, {tenseStory: data.story, tenseStoryLoading: false}))
+                        }}
+                        className="mt-3 block w-full text-left text-xs font-semibold text-cyan-600 bg-cyan-50 hover:bg-cyan-100 px-3 py-2 rounded-lg border border-cyan-200"
+                      >
+                        📖 See as a natural story
+                      </button>
+                    ) : (
+                      <div className="mt-3 p-3 bg-cyan-50 rounded-lg border border-cyan-200">
+                        <p className="text-xs font-bold text-cyan-600 uppercase tracking-widest mb-2">📖 Natural Story — {rs.activeTense}</p>
+                        {rs.tenseStoryLoading ? (
+                          <p className="text-cyan-400 text-sm animate-pulse">Writing...</p>
+                        ) : (
+                          <>
+                            <p className="text-slate-800 text-sm font-medium leading-relaxed">{rs.tenseStory}</p>
+                            <button onClick={() => speak(rs.tenseStory)} className="mt-2 text-cyan-400 hover:text-cyan-600 text-sm">🔊 Listen</button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )}

@@ -518,3 +518,40 @@ Return ONLY the JSON array, no other text."""}]
     except Exception:
         points = [{"persian": response.content[0].text.strip(), "highlight": []}]
     return {"points": points}
+
+
+@router.post("/analyze/tense")
+def analyze_tense(body: dict, db: Session = Depends(get_db)):
+    text = body.get("text", "").strip()
+    tense = body.get("tense", "").strip()
+    if not text or not tense:
+        raise HTTPException(status_code=400, detail="No text or tense provided")
+
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=400,
+        messages=[{"role": "user", "content": f"""Rewrite the following English text in {tense} tense.
+Keep the same meaning and sentence structure as much as possible.
+Return ONLY the rewritten text, nothing else.
+Text: {text}"""}]
+    )
+    return {"rewritten": response.content[0].text.strip()}
+
+
+@router.post("/analyze/tense-story")
+def analyze_tense_story(body: dict, db: Session = Depends(get_db)):
+    text = body.get("text", "").strip()
+    tense = body.get("tense", "").strip()
+    if not text or not tense:
+        raise HTTPException(status_code=400, detail="No text or tense provided")
+
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=400,
+        messages=[{"role": "user", "content": f"""Rewrite the following English text as a natural, coherent story in {tense} tense.
+Do not just mechanically change verb forms — adjust time markers (like yesterday, tomorrow, now, already), context, and flow so it reads like a real, natural narrative in that time frame.
+Keep the same core meaning but make it sound natural.
+Return ONLY the rewritten paragraph, nothing else.
+Text: {text}"""}]
+    )
+    return {"story": response.content[0].text.strip()}
