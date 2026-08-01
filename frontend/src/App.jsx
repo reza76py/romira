@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import ConversationView from './ConversationView.jsx'
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom'
 import {
   ResponsiveContainer,
@@ -6,7 +7,7 @@ import {
   BarChart, Bar,
 } from 'recharts'
 
-const PERSIAN_FONT = { fontFamily: "'Vazirmatn', sans-serif" }
+export const PERSIAN_FONT = { fontFamily: "'Vazirmatn', sans-serif" }
 
 // ─── Login View ───────────────────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ function LoginView({ onLogin }) {
 // ─── Student View ────────────────────────────────────────────────────────────
 
 function StudentView({ student, onExit }) {
+  const [showConversation, setShowConversation] = useState(false)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState([])
@@ -416,6 +418,10 @@ function StudentView({ student, onExit }) {
     )
   }
 
+  if (showConversation) {
+    return <ConversationView studentId={student.id} onExit={() => setShowConversation(false)} />
+  }
+
   return (
     <div className="flex flex-col bg-amber-50" style={{ height: '100dvh' }}>
       {/* Header */}
@@ -428,6 +434,12 @@ function StudentView({ student, onExit }) {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-teal-100 font-medium">Hello, {student.name} 👋</span>
+          <button
+            onClick={() => setShowConversation(true)}
+            className="text-sm font-semibold text-white bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1.5 rounded-lg"
+          >
+            💬 Conversation
+          </button>
           {results.length > 0 && (
             <button
               onClick={() => { setResults([]); setResultStates([]); setAccumulatedText('') }}

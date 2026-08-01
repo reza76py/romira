@@ -5,6 +5,7 @@ from routers import students
 from routers import chat
 from routers import agent
 from routers import student
+from routers import conversation
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -18,6 +19,7 @@ app.include_router(students.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(agent.router, prefix="/api")
 app.include_router(student.router, prefix="/api")
+app.include_router(conversation.router, prefix="/api")
 
 @app.get("/")
 def read_root():

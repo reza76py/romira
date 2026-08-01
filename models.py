@@ -58,3 +58,30 @@ class StudentVocabulary(Base):
     next_review = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
     student = relationship("Student")
+
+
+class ConversationSession(Base):
+    __tablename__ = "conversation_sessions"
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"))
+    lesson_type = Column(String(20), nullable=False)
+    topic = Column(String(255), nullable=True)
+    scenario = Column(Text, nullable=True)
+    status = Column(String(20), default="active")
+    turn_count = Column(Integer, default=0)
+    summary = Column(Text, nullable=True)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    ended_at = Column(DateTime, nullable=True)
+    student = relationship("Student")
+    turns = relationship("ConversationTurn", back_populates="session")
+
+
+class ConversationTurn(Base):
+    __tablename__ = "conversation_turns"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("conversation_sessions.id"))
+    role = Column(String(10), nullable=False)
+    content = Column(Text, nullable=False)
+    correction = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    session = relationship("ConversationSession", back_populates="turns")

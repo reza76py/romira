@@ -106,6 +106,36 @@ class VocabResponse(BaseModel):
         from_attributes = True
 
 
+class ConversationStartRequest(BaseModel):
+    student_id: int
+    lesson_type: str
+    topic: str | None = None
+    scenario: str | None = None
+
+
+class ConversationReplyRequest(BaseModel):
+    session_id: int
+    message: str
+
+
+class ConversationEndRequest(BaseModel):
+    session_id: int
+
+
+class ConversationSessionSummary(BaseModel):
+    id: int
+    lesson_type: str
+    topic: str | None
+    status: str
+    turn_count: int
+    started_at: datetime
+    ended_at: datetime | None
+    summary: dict | None = None
+
+    class Config:
+        from_attributes = True
+
+
 class StudentInteractionResponse(BaseModel):
     id: int
     student_id: int
