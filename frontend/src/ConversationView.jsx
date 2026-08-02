@@ -7,6 +7,14 @@ const LESSON_TYPES = [
   { id: 'read_talk', label: 'Read & Talk', emoji: '📖', desc: 'Coming soon', disabled: true },
 ]
 
+// Browser capability flags — computed once
+const speechInputSupported =
+  typeof window !== 'undefined' &&
+  !!(window.SpeechRecognition || window.webkitSpeechRecognition)
+
+const speechOutputSupported =
+  typeof window !== 'undefined' && !!window.speechSynthesis
+
 // ─── Setup Screen ─────────────────────────────────────────────────────────────
 
 function SetupScreen({ studentId, onStart }) {
@@ -116,15 +124,101 @@ function ChatScreen({ studentId, session, onFinish }) {
   const [turnCount, setTurnCount] = useState(0)
   const [shouldWrap, setShouldWrap] = useState(false)
   const [error, setError] = useState(null)
-  const bottomRef = useRef(null)
+  const [listening, setListening] = useState(false)
+  const [autoSpeak, setAutoSpeak] = useState(true)
+  const [speakingIdx, setSpeakingIdx] = useState(null)
 
+  const bottomRef = useRef(null)
+  const recognitionRef = useRef(null)
+  const autoSpeakRef = useRef(true)
+  const lastSpokenIdxRef = useRef(-1)
+
+  // Keep autoSpeakRef in sync; cancel speech when turned off
+  useEffect(() => {
+    autoSpeakRef.current = autoSpeak
+    if (!autoSpeak) {
+      window.speechSynthesis?.cancel()
+      setSpeakingIdx(null)
+    }
+  }, [autoSpeak])
+
+  // Scroll to bottom
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
 
+  // Auto-speak new AI messages
+  useEffect(() => {
+    if (!speechOutputSupported || !autoSpeakRef.current) return
+    const lastIdx = messages.length - 1
+    const lastMsg = messages[lastIdx]
+    if (lastMsg?.role === 'ai' && lastIdx > lastSpokenIdxRef.current) {
+      lastSpokenIdxRef.current = lastIdx
+      speakText(lastMsg.content, lastIdx)
+    }
+  }, [messages]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.abort()
+      window.speechSynthesis?.cancel()
+    }
+  }, [])
+
+  function speakText(text, msgIdx) {
+    if (!window.speechSynthesis) return
+    window.speechSynthesis.cancel()
+    setSpeakingIdx(null)
+    const utt = new SpeechSynthesisUtterance(text)
+    utt.lang = 'en-US'
+    utt.rate = 0.95
+    utt.onstart = () => setSpeakingIdx(msgIdx)
+    utt.onend = () => setSpeakingIdx(null)
+    utt.onerror = () => setSpeakingIdx(null)
+    window.speechSynthesis.speak(utt)
+  }
+
+  function toggleListening() {
+    if (listening) {
+      recognitionRef.current?.stop()
+      setListening(false)
+      return
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    const recognition = new SR()
+    recognition.lang = 'en-US'
+    recognition.continuous = false
+    recognition.interimResults = true
+
+    recognition.onresult = (event) => {
+      let transcript = ''
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript
+      }
+      setInput(transcript)
+    }
+    recognition.onend = () => setListening(false)
+    recognition.onerror = () => setListening(false)
+
+    recognitionRef.current = recognition
+    recognition.start()
+    setListening(true)
+  }
+
   async function handleSend() {
     const text = input.trim()
     if (!text || loading) return
+
+    // Stop recognition if running
+    if (listening) {
+      recognitionRef.current?.stop()
+      setListening(false)
+    }
+    // Cancel any current speech
+    window.speechSynthesis?.cancel()
+    setSpeakingIdx(null)
+
     setInput('')
     setError(null)
     setMessages(prev => [...prev, { role: 'student', content: text, correction: null }])
@@ -142,7 +236,6 @@ function ChatScreen({ studentId, session, onFinish }) {
       const data = await res.json()
       setMessages(prev => {
         const next = [...prev]
-        // attach correction to the student message we just appended
         next[next.length - 1] = { ...next[next.length - 1], correction: data.correction }
         return [...next, { role: 'ai', content: data.reply, correction: null }]
       })
@@ -157,6 +250,16 @@ function ChatScreen({ studentId, session, onFinish }) {
 
   return (
     <div className="flex flex-col h-full bg-amber-50">
+      <style>{`
+        @keyframes speakPulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(13,148,136,0); }
+          50%       { box-shadow: 0 0 0 6px rgba(13,148,136,0.25); }
+        }
+        .sara-speaking {
+          animation: speakPulse 1.4s ease-in-out infinite;
+        }
+      `}</style>
+
       {/* Header */}
       <header className="bg-teal-700 text-white px-4 py-3 flex justify-between items-center shrink-0">
         <div>
@@ -165,8 +268,21 @@ function ChatScreen({ studentId, session, onFinish }) {
           </p>
           {session.topic && <p className="text-teal-200 text-xs">{session.topic}</p>}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <span className="text-xs text-teal-300">turn {turnCount}</span>
+          {speechOutputSupported && (
+            <button
+              onClick={() => setAutoSpeak(v => !v)}
+              title={autoSpeak ? 'Auto-speak on — tap to mute' : 'Auto-speak off — tap to unmute'}
+              className={`text-base px-2 py-1 rounded-lg transition-colors ${
+                autoSpeak
+                  ? 'bg-teal-600 text-white border border-teal-400'
+                  : 'text-teal-400 border border-teal-600'
+              }`}
+            >
+              {autoSpeak ? '🔊' : '🔇'}
+            </button>
+          )}
           <button
             onClick={onFinish}
             className="text-xs text-teal-200 hover:text-white border border-teal-500 hover:border-teal-300 px-3 py-1.5 rounded-lg transition-colors"
@@ -184,7 +300,7 @@ function ChatScreen({ studentId, session, onFinish }) {
               <div
                 className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
                   msg.role === 'ai'
-                    ? 'bg-white text-slate-800 rounded-tl-sm border border-slate-100 shadow-sm'
+                    ? `bg-white text-slate-800 rounded-tl-sm border border-slate-100 shadow-sm${speakingIdx === i ? ' sara-speaking' : ''}`
                     : 'bg-teal-600 text-white rounded-tr-sm'
                 }`}
               >
@@ -225,6 +341,12 @@ function ChatScreen({ studentId, session, onFinish }) {
 
       {/* Input */}
       <div className="shrink-0 bg-white border-t border-slate-200 px-4 pt-3 pb-4">
+        {listening && (
+          <p className="text-xs text-rose-500 mb-1.5 flex items-center gap-1">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+            Listening… speak now
+          </p>
+        )}
         <div className="flex gap-2 items-end">
           <textarea
             value={input}
@@ -232,11 +354,25 @@ function ChatScreen({ studentId, session, onFinish }) {
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
             }}
-            placeholder="Type your message…"
+            placeholder={listening ? 'Listening…' : 'Type your message…'}
             rows={2}
             disabled={loading}
             className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-slate-800 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-slate-50"
           />
+          {speechInputSupported && (
+            <button
+              onClick={toggleListening}
+              disabled={loading}
+              title={listening ? 'Stop recording' : 'Speak'}
+              className={`p-2.5 rounded-xl transition-colors shrink-0 text-lg ${
+                listening
+                  ? 'bg-rose-500 text-white animate-pulse'
+                  : 'bg-slate-100 text-slate-500 hover:bg-slate-200 disabled:opacity-40'
+              }`}
+            >
+              🎤
+            </button>
+          )}
           <button
             onClick={handleSend}
             disabled={loading || !input.trim()}
