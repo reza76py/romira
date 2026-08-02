@@ -16,12 +16,12 @@ router = APIRouter(prefix="/conversation", tags=["conversation"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 REPLY_MODES = [
-    "React briefly in one sentence, then share a short related experience or opinion of your own. Do NOT ask a question this turn.",
-    "Ask one curious follow-up question about something specific the student just said.",
-    "Respond in a single short sentence. No question. Just react like a friend would.",
-    "Offer your own opinion on the topic, even if it differs slightly from the student's. Do not ask a question.",
-    "Pick something small the student mentioned in passing and ask them to tell you more about that specific thing.",
-    "Share something about your own life related to the topic, then ask what they think.",
+    "React in one short sentence, then add one sentence about your own experience. No question.",
+    "Ask one short follow-up question about something specific the student just said. Nothing else.",
+    "One sentence only. No question. Just react.",
+    "One sentence giving your own opinion, even if it differs slightly. No question.",
+    "Pick one small thing the student mentioned and ask one short question about it.",
+    "One sentence about your own life on this topic, then one short question.",
 ]
 
 OPENER_STYLES = [
@@ -80,11 +80,14 @@ How to react naturally (model your tone on these):
 - Student: "We were very busy." → You: "Yeah, that sounds like one of those weeks where time just disappears."
 
 Never comment on the student's English, grammar, or language ability.
+Corrections appear automatically beside the student's messages — you do not write them, but they are there. If the student asks about corrections or mistakes, tell them the corrections appear next to their own messages and that you focus on the conversation. Never say you will not correct them, and never say mistakes don't matter.
 {target_block}
 {words_block}
 
 THIS TURN — follow this instruction exactly:
 {turn_mode}
+
+Hard limit: your reply must be at most 2 sentences. Never more. Keep it short like real spoken conversation.
 
 Student's known grammar weak points (do not reproduce these mistakes yourself):
 {error_lines}
@@ -103,27 +106,33 @@ Student: {prev_student_msg}
 """
 
     prompt = f"""You are an English grammar checker for a Persian ESL student.
+
+SPEECH INPUT RULE — read this first:
+This text comes from SPEECH. It has no punctuation and no capital letters. That is expected and is NOT an error.
+NEVER add or change punctuation. NEVER change capitalisation. NEVER mention them in your note.
+If the only thing you would change is punctuation or capitalisation, return null.
+Examples:
+- "what do you mean i cant understand"      → only fix "cant" → "can't". Return nothing else.
+- "i dont want to cook i dont like cooking" → only fix "dont" → "don't". Do NOT add a period or comma.
+- "excuse me who you are"                   → "excuse me who are you" (word order). Do NOT capitalise or add '?'.
 {context_block}
 Student's current message: {json.dumps(student_message)}
 
 Check EVERY sentence for real grammatical errors: wrong tense, missing or wrong article, subject-verb disagreement, wrong verb form, missing preposition, article used with an uncountable noun.
 
 Use the context messages to determine tense. They tell you WHEN the events happened. If the student is describing a past event, past tense is correct — read the context before deciding.
-Example: context shows yesterday's dinner → "She make it alone" → "She made it alone" (NOT "She makes").
+Example: context shows yesterday's dinner → "she make it alone" → "she made it alone" (NOT "she makes").
 
 Uncountable noun errors to catch — these ARE errors:
-- "She cooked a very delicious food." → "She cooked very delicious food." ('food' is uncountable — remove 'a')
-- "I have a good news." → "I have good news." ('news' is uncountable — remove 'a')
-- "She gave me an advice." → "She gave me advice." ('advice' is uncountable — remove 'an')
-
-Examples of what NOT to change:
-- "No I dont cook." — fix only the apostrophe: "No I don't cook." Do NOT add a comma after 'No'.
+- "she cooked a very delicious food" → "she cooked very delicious food" ('food' is uncountable — remove 'a')
+- "i have a good news" → "i have good news" ('news' is uncountable — remove 'a')
+- "she gave me an advice" → "she gave me advice" ('advice' is uncountable — remove 'an')
 
 In `corrected`, copy the student's message exactly — same words, same word order, same punctuation — except for genuine grammar fixes.
-In `note`, list only the fixes you actually made. Never mention a change you did not make.
+In `note`, list only the fixes you actually made. Never mention punctuation, capitalisation, or a change you did not make.
 
-Rule: every sentence in `corrected` must be natural English that a native speaker would actually say. If fixing an error would produce an unnatural sentence, leave that part unchanged and correct only what you can fix cleanly.
-"I work in emergency." → leave unchanged. Do NOT write "the emergency" or "emergency room".
+Rule: every sentence in `corrected` must be natural English that a native speaker would actually say. If fixing an error would produce an unnatural sentence, leave that part unchanged.
+"i work in emergency" → leave unchanged. Do NOT write "the emergency" or "emergency room".
 
 If you find ANY real grammar error:
 Return a JSON object:
@@ -327,7 +336,7 @@ def reply_to_conversation(body: schemas.ConversationReplyRequest, db: Session = 
     # Call 1: conversational reply (uses full history context)
     reply_response = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=300,
+        max_tokens=150,
         system=reply_system,
         messages=messages,
     )

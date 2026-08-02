@@ -132,6 +132,7 @@ function ChatScreen({ studentId, session, onFinish }) {
   const recognitionRef = useRef(null)
   const autoSpeakRef = useRef(true)
   const lastSpokenIdxRef = useRef(-1)
+  const submittingRef = useRef(false)  // blocks onresult from repopulating after send
 
   // Keep autoSpeakRef in sync; cancel speech when turned off
   useEffect(() => {
@@ -192,6 +193,7 @@ function ChatScreen({ studentId, session, onFinish }) {
     recognition.interimResults = true
 
     recognition.onresult = (event) => {
+      if (submittingRef.current) return   // message already sent — discard late results
       let transcript = ''
       for (let i = event.resultIndex; i < event.results.length; i++) {
         transcript += event.results[i][0].transcript
@@ -210,9 +212,11 @@ function ChatScreen({ studentId, session, onFinish }) {
     const text = input.trim()
     if (!text || loading) return
 
+    // Block any late recognition results from repopulating the input
+    submittingRef.current = true
     // Stop recognition if running
     if (listening) {
-      recognitionRef.current?.stop()
+      recognitionRef.current?.abort()
       setListening(false)
     }
     // Cancel any current speech
@@ -245,6 +249,7 @@ function ChatScreen({ studentId, session, onFinish }) {
       setError(e.message)
     } finally {
       setLoading(false)
+      submittingRef.current = false  // allow mic input again after send completes
     }
   }
 
