@@ -16,7 +16,7 @@ router = APIRouter(prefix="/conversation", tags=["conversation"])
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 
-def _build_system_prompt(student, errors, lesson_type, topic, scenario):
+def _build_reply_system_prompt(student, errors, lesson_type, topic, scenario):
     error_lines = "\n".join(f"- {e.wrong} → {e.correct}" for e in errors) or "None recorded yet."
     context_lines = []
     if topic:
@@ -32,20 +32,41 @@ Level: {student.level}
 Lesson type: {lesson_type}
 {context}
 
-The student's known grammar weak points (do not repeat these mistakes yourself):
+The student's known grammar weak points (for reference — do not repeat these mistakes yourself):
 {error_lines}
 
-Your job every turn:
-1. Reply naturally as a conversation partner — 1 to 3 sentences, spoken-English register, almost always end with a question to keep the conversation going.
-2. If the student made a real grammatical error, include a correction. Only correct real errors — never nitpick style, word choice, or informal speech. Never mention the correction inside your reply; the reply must flow as if the mistake did not happen.
+Reply naturally as a conversation partner: 1 to 3 sentences, spoken-English register, almost always ending with a question. Never comment on grammar. Return ONLY the plain reply text — no JSON, no labels."""
 
-You MUST return ONLY raw JSON — no markdown, no backticks, no explanation before or after. The response must start with {{ and end with }}.
 
-When there is no error:
-{{"reply": "<your conversational response>", "correction": null}}
+def _check_correction(student_message: str) -> dict | None:
+    """Isolated grammar check — sees only the student's message, no conversation history."""
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=300,
+        messages=[{"role": "user", "content": f"""You are an English grammar checker for a Persian ESL student.
 
-When there is a real error:
-{{"reply": "<your conversational response>", "correction": {{"corrected": "<student sentence, fixed>", "note": "<one short English line explaining the fix>", "note_fa": "<same explanation in Persian>"}}}}"""
+Read every sentence in the student's message and identify real grammatical errors: wrong tense, missing or wrong article, subject-verb disagreement, wrong verb form, missing preposition.
+
+Student message: {json.dumps(student_message)}
+
+If you find ANY real grammar error across ALL sentences:
+Return a JSON object:
+{{"corrected": "<the student's full message with every error fixed — change nothing except grammar>", "note": "<one English line listing every fix made, exactly matching what changed in corrected — never mention a fix you did not make>", "note_fa": "<same explanation in Persian>"}}
+
+If there are genuinely zero real grammar errors:
+Return exactly: null
+
+Return ONLY the JSON object or null. No other text, no markdown."""}]
+    )
+    raw = response.content[0].text.strip()
+    if raw.lower() == "null" or not raw:
+        return None
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
 
 
 @router.post("/start")
@@ -127,33 +148,32 @@ def reply_to_conversation(body: schemas.ConversationReplyRequest, db: Session = 
         .all()
     )
 
+    # Keep context focused — send at most the last 20 turns
+    if len(prior_turns) > 20:
+        prior_turns = prior_turns[-20:]
+
     messages = []
     for turn in prior_turns:
         claude_role = "user" if turn.role == "student" else "assistant"
         messages.append({"role": claude_role, "content": turn.content})
     messages.append({"role": "user", "content": body.message})
 
-    system_prompt = _build_system_prompt(
+    reply_system = _build_reply_system_prompt(
         student, errors,
         session.lesson_type, session.topic, session.scenario
     )
 
-    response = client.messages.create(
+    # Call 1: conversational reply (uses full history context)
+    reply_response = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=600,
-        system=system_prompt,
+        max_tokens=300,
+        system=reply_system,
         messages=messages,
     )
+    reply_text = reply_response.content[0].text.strip()
 
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-    try:
-        result = json.loads(raw)
-    except Exception:
-        result = {"reply": raw, "correction": None}
-
-    correction = result.get("correction")
+    # Call 2: isolated grammar correction (no conversation context)
+    correction = _check_correction(body.message)
     correction_str = json.dumps(correction, ensure_ascii=False) if correction else None
 
     db.add(models.ConversationTurn(
@@ -165,7 +185,7 @@ def reply_to_conversation(body: schemas.ConversationReplyRequest, db: Session = 
     db.add(models.ConversationTurn(
         session_id=body.session_id,
         role="ai",
-        content=result["reply"],
+        content=reply_text,
     ))
 
     if correction:
@@ -182,7 +202,7 @@ def reply_to_conversation(body: schemas.ConversationReplyRequest, db: Session = 
     db.commit()
 
     return {
-        "reply": result["reply"],
+        "reply": reply_text,
         "correction": correction,
         "turn_count": session.turn_count,
         "should_wrap": session.turn_count >= 12,
@@ -220,7 +240,7 @@ Return this exact shape:
 
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=600,
+        max_tokens=1500,
         messages=[{"role": "user", "content": summary_prompt}]
     )
 
@@ -230,7 +250,11 @@ Return this exact shape:
     try:
         report = json.loads(raw)
     except Exception:
-        report = {"summary": raw, "summary_fa": "", "strengths": [], "focus_areas": [], "new_words": []}
+        report = {
+            "error": "Summary generation failed to produce valid JSON",
+            "raw": raw[:500],
+            "summary": "", "summary_fa": "", "strengths": [], "focus_areas": [], "new_words": [],
+        }
 
     session.summary = json.dumps(report, ensure_ascii=False)
     session.status = "closed"
