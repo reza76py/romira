@@ -32,7 +32,9 @@ OPENER_STYLES = [
 ]
 
 
-def _build_reply_system_prompt(student, errors, lesson_type, topic, scenario, turn_mode: str):
+def _build_reply_system_prompt(student, errors, lesson_type, topic, scenario, turn_mode: str,
+                               target_grammar_json: str | None = None,
+                               target_words_json: str | None = None):
     error_lines = "\n".join(f"- {e.wrong} → {e.correct}" for e in errors) or "None recorded yet."
     context_lines = []
     if topic:
@@ -40,6 +42,33 @@ def _build_reply_system_prompt(student, errors, lesson_type, topic, scenario, tu
     if scenario:
         context_lines.append(f"Scenario: {scenario}")
     context = "\n".join(context_lines) if context_lines else ""
+
+    target_block = ""
+    if target_grammar_json:
+        try:
+            tg = json.loads(target_grammar_json)
+            target_block = (
+                f"\nThis student is working on {tg.get('target', '')}. "
+                f"{tg.get('hint', '')} "
+                f"Where it fits naturally, choose questions that invite them to use this structure. "
+                f"Do NOT mention this to the student, do NOT teach or explain grammar, and do NOT force it — "
+                f"at most one steered question every three turns. The conversation must always feel like a normal chat."
+            )
+        except Exception:
+            pass
+
+    words_block = ""
+    if target_words_json:
+        try:
+            words = json.loads(target_words_json)
+            if words:
+                words_block = (
+                    f"\nThese are words the student is currently learning: {', '.join(words)}. "
+                    f"Use one or two of them naturally in your replies when they genuinely fit the topic. "
+                    f"Never force a word in, and never draw attention to the fact that you used it."
+                )
+        except Exception:
+            pass
 
     return f"""You are Sara — a friendly adult native English speaker in your early 30s. You work as a graphic designer, love hiking, cooking Persian food (your mum is Iranian), and have strong opinions about bad coffee. You are chatting with {student.name} as a friend, not as a student. You are NOT a teacher and must never sound like one.
 
@@ -51,6 +80,8 @@ How to react naturally (model your tone on these):
 - Student: "We were very busy." → You: "Yeah, that sounds like one of those weeks where time just disappears."
 
 Never comment on the student's English, grammar, or language ability.
+{target_block}
+{words_block}
 
 THIS TURN — follow this instruction exactly:
 {turn_mode}
@@ -140,6 +171,45 @@ def start_conversation(body: schemas.ConversationStartRequest, db: Session = Dep
     db.commit()
     db.refresh(session)
 
+    # --- Grammar target detection ---
+    recent_errors = (
+        db.query(models.StudentError)
+        .filter(models.StudentError.student_id == body.student_id)
+        .order_by(models.StudentError.noted_at.desc())
+        .limit(30)
+        .all()
+    )
+    if len(recent_errors) >= 5:
+        error_pairs = "\n".join(f"- {e.wrong} → {e.correct}" for e in recent_errors)
+        tg_response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=200,
+            messages=[{"role": "user", "content": f"""Here are a student's recent grammar errors (wrong → correct):
+{error_pairs}
+
+Return raw JSON only (no markdown, no explanation):
+{{"target": "<short name of the single most frequent grammar weakness>", "hint": "<one sentence describing what kind of questions would naturally make the student use this structure>"}}"""}]
+        )
+        tg_raw = tg_response.content[0].text.strip()
+        if tg_raw.startswith("```"):
+            tg_raw = tg_raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        try:
+            json.loads(tg_raw)
+            session.target_grammar = tg_raw
+        except Exception:
+            session.target_grammar = None
+
+    # --- Vocabulary seeding (prefer boxes 1 and 2) ---
+    vocab_rows = (
+        db.query(models.StudentVocabulary)
+        .filter(models.StudentVocabulary.student_id == body.student_id)
+        .order_by(models.StudentVocabulary.box.asc())
+        .limit(8)
+        .all()
+    )
+    if vocab_rows:
+        session.target_words = json.dumps([v.word for v in vocab_rows], ensure_ascii=False)
+
     # Count previous sessions (not including the one just created) for opener style rotation
     prev_session_count = (
         db.query(models.ConversationSession)
@@ -194,11 +264,20 @@ def start_conversation(body: schemas.ConversationStartRequest, db: Session = Dep
     ))
     db.commit()
 
+    tg_parsed = None
+    if session.target_grammar:
+        try:
+            tg_parsed = json.loads(session.target_grammar)
+        except Exception:
+            pass
+
     return {
         "session_id": session.id,
         "opening": opening,
         "lesson_type": session.lesson_type,
         "topic": session.topic,
+        "target_grammar": tg_parsed,
+        "target_words": json.loads(session.target_words) if session.target_words else None,
     }
 
 
@@ -240,7 +319,9 @@ def reply_to_conversation(body: schemas.ConversationReplyRequest, db: Session = 
     reply_system = _build_reply_system_prompt(
         student, errors,
         session.lesson_type, session.topic, session.scenario,
-        turn_mode=turn_mode
+        turn_mode=turn_mode,
+        target_grammar_json=session.target_grammar,
+        target_words_json=session.target_words,
     )
 
     # Call 1: conversational reply (uses full history context)
@@ -313,6 +394,16 @@ def end_conversation(body: schemas.ConversationEndRequest, db: Session = Depends
 
     transcript = "\n".join(f"{t.role.upper()}: {t.content}" for t in turns)
 
+    existing_vocab = (
+        db.query(models.StudentVocabulary)
+        .filter(models.StudentVocabulary.student_id == session.student_id)
+        .all()
+    )
+    existing_words = [v.word for v in existing_vocab]
+    exclude_block = ""
+    if existing_words:
+        exclude_block = f"\nThe student already has these words — do NOT suggest them: {', '.join(existing_words)}."
+
     summary_prompt = f"""Review this English conversation session and return ONLY raw JSON — no markdown, no backticks, no explanation.
 
 Transcript:
@@ -325,7 +416,9 @@ Return this exact shape:
   "strengths": ["<strength 1>", "<strength 2>"],
   "focus_areas": ["<area to improve 1>"],
   "new_words": [{{"word": "<english word or phrase>", "translation": "<persian meaning>"}}]
-}}"""
+}}
+
+For new_words: pick 3–5 words or short phrases that YOU (the AI) actually used in the AI turns above, that appear to be above the student's current level. Every entry must genuinely appear verbatim in your own messages. Do not invent or suggest words not present in the transcript.{exclude_block}"""
 
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",

@@ -72,6 +72,8 @@ class ConversationSession(Base):
     summary = Column(Text, nullable=True)
     started_at = Column(DateTime, default=datetime.utcnow)
     ended_at = Column(DateTime, nullable=True)
+    target_grammar = Column(String(255), nullable=True)
+    target_words = Column(Text, nullable=True)
     student = relationship("Student")
     turns = relationship("ConversationTurn", back_populates="session")
 
