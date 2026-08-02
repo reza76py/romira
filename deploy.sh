@@ -20,14 +20,6 @@ docker compose up -d
 echo "=== Waiting for database ==="
 sleep 15
 
-echo "=== Running migrations ==="
-docker compose exec -T romira-backend python -c "
-from database import engine
-import models
-models.Base.metadata.create_all(bind=engine)
-print('Tables created.')
-"
-
 echo "=== Seeding data ==="
 docker compose exec -T romira-backend python seed.py
 
